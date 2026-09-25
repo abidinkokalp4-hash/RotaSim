@@ -1,7 +1,7 @@
 name: rotasim
-description: Kisisel rota planlama ve GPX olusturma uygulamasi
+description: Gelismis rota planlama ve simulasyon uygulamasi
 publish_to: 'none'
-version: 1.0.0+1
+version: 2.0.0+2
 environment:
   sdk: '>=3.3.0 <4.0.0'
 dependencies:
@@ -12,6 +12,8 @@ dependencies:
   intl: ^0.20.2
   path_provider: ^2.1.5
   share_plus: ^11.0.0
+  geolocator: ^14.0.2
+  shared_preferences: ^2.5.3
 dev_dependencies:
   flutter_test:
     sdk: flutter
