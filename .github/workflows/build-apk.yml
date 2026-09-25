@@ -18,6 +18,14 @@ jobs:
           channel: stable
       - name: Create Android project
         run: flutter create --platforms=android --org com.rotasim .
+      - name: Add Android location permission
+        run: |
+          python3 - <<'PY'
+          p='android/app/src/main/AndroidManifest.xml'
+          s=open(p).read()
+          s=s.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">','<manifest xmlns:android="http://schemas.android.com/apk/res/android">\\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>')
+          open(p,'w').write(s)
+          PY
       - name: Get dependencies
         run: flutter pub get
       - name: Build release APK
