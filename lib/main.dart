@@ -119,12 +119,13 @@ class _Home extends State<Home>{
  }
  Future<void> importTrack()async{
   try{
-   final result=await FilePicker.platform.pickFiles(type:FileType.custom,allowedExtensions:const ['gpx','kml','geojson','csv','json','rotasim'],allowMultiple:false,withData:true);
+   final result=await FilePicker.pickFiles(type:FileType.custom,allowedExtensions:const ['gpx','kml','geojson','csv','json','rotasim'],allowMultiple:false,withData:true);
    if(result==null||result.files.isEmpty)return;
+   if(!mounted)return;
    final file=result.files.single;final bytes=file.bytes??(file.path==null?throw const FormatException('Dosya okunamadı.'):await File(file.path!).readAsBytes());
    final imported=parseTrackFile(file.name,utf8.decode(bytes,allowMalformed:false));
    if(imported.length<2)throw const FormatException('Dosyada en az iki geçerli rota noktası bulunamadı.');
-   if(pts.isNotEmpty){final replace=await showDialog<bool>(context:context,builder:(dialog)=>AlertDialog(title:const Text('Açık rotayı değiştir?'),content:const Text('İçe aktarılan rota ekranda açılacak. Kayıtlı rotalar ve seçtiğiniz kaynak dosya değiştirilmez.'),actions:[TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('VAZGEÇ')),FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('ROTAYI AÇ'))]));if(replace!=true)return;}
+   if(pts.isNotEmpty){if(!mounted)return;final replace=await showDialog<bool>(context:context,builder:(dialog)=>AlertDialog(title:const Text('Açık rotayı değiştir?'),content:const Text('İçe aktarılan rota ekranda açılacak. Kayıtlı rotalar ve seçtiğiniz kaynak dosya değiştirilmez.'),actions:[TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('VAZGEÇ')),FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('ROTAYI AÇ'))]));if(!mounted||replace!=true)return;}
    setState((){pts..clear()..addAll(imported);stops.clear();undo.clear();start=DateTime.now();distanceC.text=actualKm.toStringAsFixed(2);speedC.text='5.0';autoEnd=true;syncEnd();routeFinished=true;drawing=false;editingPoints=true;addingStop=false;flowStep=0;mapError=false;mapRetry++;});
    fitRoute();
    if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('${file.name} yüklendi. Mor rota noktalarını sürükleyerek düzenleyebilirsiniz.')));
