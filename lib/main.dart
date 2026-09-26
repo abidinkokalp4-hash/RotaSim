@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:flutter_map_maplibre/flutter_map_maplibre.dart';
 import 'package:archive/archive_io.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:intl/intl.dart';
