@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:archive/archive_io.dart';
@@ -244,6 +245,67 @@ class _Home extends State<Home>{
   final v=await showDialog<int>(context:context,builder:(x)=>AlertDialog(title:Text('Durak ${i+1}'),content:Row(children:[Expanded(child:TextField(controller:h,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Saat'))),const SizedBox(width:6),Expanded(child:TextField(controller:m,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Dakika'))),const SizedBox(width:6),Expanded(child:TextField(controller:s,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Saniye')))]),actions:[if(old.isNotEmpty)TextButton(onPressed:()=>Navigator.pop(x,-1),child:const Text('Durağı sil')),TextButton(onPressed:()=>Navigator.pop(x),child:const Text('İptal')),FilledButton(onPressed:(){final total=(int.tryParse(h.text)??0)*3600+(int.tryParse(m.text)??0)*60+(int.tryParse(s.text)??0);Navigator.pop(x,total);},child:Text(old.isEmpty?'Ekle':'Güncelle'))]));
   if(v==null)return;setState((){stops.removeWhere((e)=>e.index==i);if(v>0)stops.add(Stop(i,v));syncEnd();});
 }
+ Future<void> generateAutomaticStops() async {
+  if(pts.length<2)return;
+  final movementSeconds=estimatedMove.inSeconds;
+  if(manualSpeed<=0||movementSeconds<12*60){
+   if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Otomatik durak için rota en az 12 dakikalık hareket süresine sahip olmalı.')));
+   return;
+  }
+  final original=List<LatLng>.of(pts);
+  final cumulative=List<double>.filled(original.length,0);
+  for(var i=1;i<original.length;i++)cumulative[i]=cumulative[i-1]+D(original[i-1],original[i]);
+  final pathMeters=cumulative.last;
+  if(pathMeters<100){
+   if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Durak oluşturmak için rota biraz daha uzun olmalı.')));
+   return;
+  }
+  final random=math.Random();
+  final count=(movementSeconds/(20*60)).ceil().clamp(1,10).toInt();
+  final sectionSeconds=movementSeconds/(count+1);
+  final occupiedMeters=<double>[
+   for(final stop in stops)cumulative[stop.index.clamp(0,original.length-1).toInt()],
+  ];
+  final candidates=<MapEntry<double,int>>[];
+  for(var i=0;i<count;i++){
+   final jitter=(random.nextDouble()-0.5)*sectionSeconds*0.28;
+   final targetSeconds=(sectionSeconds*(i+1)+jitter).clamp(300.0,(movementSeconds-300).toDouble()).toDouble();
+   final targetMeters=pathMeters*targetSeconds/movementSeconds;
+   if(occupiedMeters.any((meters)=>(meters-targetMeters).abs()<250))continue;
+   final roll=random.nextInt(100);
+   final waitSeconds=roll<62?5+random.nextInt(26):roll<94?60+random.nextInt(121):300+random.nextInt(301);
+   candidates.add(MapEntry(targetMeters,waitSeconds));
+   occupiedMeters.add(targetMeters);
+  }
+  candidates.sort((a,b)=>a.key.compareTo(b.key));
+  var added=0,insertedBefore=0;
+  setState((){
+   for(final candidate in candidates){
+    var segmentIndex=0;
+    while(segmentIndex<original.length-2&&candidate.key>cumulative[segmentIndex+1])segmentIndex++;
+    final span=cumulative[segmentIndex+1]-cumulative[segmentIndex];
+    final ratio=span<=0?0.0:((candidate.key-cumulative[segmentIndex])/span).clamp(0.0,1.0).toDouble();
+    var stopIndex=segmentIndex+insertedBefore;
+    if(ratio>=0.985)stopIndex++;
+    else if(ratio>0.015){
+     final a=original[segmentIndex],b=original[segmentIndex+1];
+     final point=LatLng(a.latitude+(b.latitude-a.latitude)*ratio,a.longitude+(b.longitude-a.longitude)*ratio);
+     stopIndex=segmentIndex+1+insertedBefore;
+     pts.insert(stopIndex,point);
+     for(var i=0;i<stops.length;i++){if(stops[i].index>=stopIndex)stops[i]=Stop(stops[i].index+1,stops[i].sec);}
+     insertedBefore++;
+    }
+    stops.add(Stop(stopIndex,candidate.value));
+    added++;
+   }
+   stops.sort((a,b)=>a.index.compareTo(b.index));
+   syncEnd();
+  });
+  if(mounted){
+   final message=added==0?'Bu rotadaki mevcut duraklara yakın yeni bir konum bulunamadı.':'$added otomatik durak eklendi. Sürelerini Duraklar bölümünden değiştirebilirsiniz.';
+   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(message)));
+  }
+ }
  void animate(){timer?.cancel();if(pts.isEmpty)return;setState((){playing=true;playIndex=0;});timer=Timer.periodic(const Duration(milliseconds:450),(t){if(playIndex>=pts.length-1){t.cancel();setState(()=>playing=false);}else setState(()=>playIndex++);});}
  String timeFor(int i){if(pts.length<2)return start.toUtc().toIso8601String();double total=0,at=0;for(int k=1;k<pts.length;k++){final q=D(pts[k-1],pts[k]);total+=q;if(k<=i)at+=q;}final move=end.difference(start).inSeconds-stopSec;var sec=(move.clamp(0,999999999)*(total==0?0:at/total)).round();for(final s in stops){if(s.index<=i)sec+=s.sec;}return start.add(Duration(seconds:sec)).toUtc().toIso8601String();}
  String gpx(){final b=StringBuffer('<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="RotaSim V3" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd"><metadata><name>$routeLabel</name><time>${start.toUtc().toIso8601String()}</time></metadata><trk><name>$routeLabel</name><type>walking</type><trkseg>\n');for(int i=0;i<pts.length;i++)b.writeln('<trkpt lat="${pts[i].latitude.toStringAsFixed(7)}" lon="${pts[i].longitude.toStringAsFixed(7)}"><time>${timeFor(i)}</time></trkpt>');b.write('</trkseg></trk><rte><name>$routeLabel</name>');for(final p in pts)b.write('<rtept lat="${p.latitude.toStringAsFixed(7)}" lon="${p.longitude.toStringAsFixed(7)}"/>');b.write('</rte></gpx>');return b.toString();}
@@ -462,7 +524,7 @@ class _Home extends State<Home>{
      _section('MESAFE',[TextField(controller:distanceC,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(suffixText:'km',hintText:'Haritadan ölçülen mesafe'),onChanged:(_)=>setState(syncEnd))]),const SizedBox(height:8),
      _section('ORTALAMA HIZ',[TextField(controller:speedC,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(suffixText:'km/sa'),onChanged:(_)=>setState(syncEnd))]),const SizedBox(height:8),
      _section('SÜRELER',[ListTile(title:const Text('Tahmini hareket süresi'),subtitle:Text(durationText(estimatedMove))),ListTile(title:const Text('Toplam bekleme'),subtitle:Text(durationText(Duration(seconds:stopSec)))),ListTile(title:const Text('Toplam rota süresi'),subtitle:Text(durationText(estimatedTotal)))]),const SizedBox(height:8),
-     _section('DURAKLAR',[Row(children:[Text('${stops.length} durak • ${durationText(Duration(seconds:stopSec))}'),const Spacer(),OutlinedButton.icon(onPressed:pts.length<2?null:addStopMode,icon:const Icon(Icons.add),label:const Text('Haritadan ekle'))]),for(var i=0;i<stops.length;i++)ListTile(title:Text('Durak ${i+1}'),subtitle:Text('Bekleme: ${durationText(Duration(seconds:stops[i].sec))}'),trailing:IconButton(tooltip:'Bekleme süresini düzenle',onPressed:()=>stopAt(stops[i].index),icon:const Icon(Icons.edit)))]),const SizedBox(height:8),
+     _section('DURAKLAR',[Row(children:[Text('${stops.length} durak • ${durationText(Duration(seconds:stopSec))}'),const Spacer(),OutlinedButton.icon(onPressed:pts.length<2?null:addStopMode,icon:const Icon(Icons.add),label:const Text('Haritadan ekle'))]),SizedBox(width:double.infinity,child:OutlinedButton.icon(onPressed:pts.length<2?null:generateAutomaticStops,icon:const Icon(Icons.auto_awesome),label:const Text('Otomatik durak ekle'))),const Padding(padding:EdgeInsets.only(bottom:4),child:Text('Hareket süresine göre rota üzerine dağılır; saniyelik ve daha uzun molalar karışık olur. Mevcut duraklar korunur.',style:TextStyle(fontSize:11,color:Colors.white60))),for(var i=0;i<stops.length;i++)ListTile(title:Text('Durak ${i+1}'),subtitle:Text('Bekleme: ${durationText(Duration(seconds:stops[i].sec))}'),trailing:IconButton(tooltip:'Bekleme süresini düzenle',onPressed:()=>stopAt(stops[i].index),icon:const Icon(Icons.edit)))]),const SizedBox(height:8),
      _section('TAHMİNİ BİTİŞ',[SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('Bitiş zamanını otomatik hesapla'),value:autoEnd,onChanged:(v)=>setState((){autoEnd=v;if(v)syncEnd();})),ListTile(title:Text(autoEnd?'Tahmini bitiş':'Elle seçilen bitiş'),subtitle:Text(DateFormat('dd.MM.yyyy • HH:mm:ss').format(autoEnd?estimatedEnd:end)),trailing:IconButton(onPressed:autoEnd?null:()=>pick(false),icon:const Icon(Icons.edit))) ,Text('Başlangıç + hareket + bekleme = bitiş',style:TextStyle(color:Colors.white.withValues(alpha:.62),fontSize:12))]),const SizedBox(height:20),
     ])),
     Padding(padding:const EdgeInsets.all(14),child:Row(children:[navButton('GERİ',()=>goToStep(0),primary:false),const SizedBox(width:10),navButton('SONRAKİ',nextToPreview)])),
