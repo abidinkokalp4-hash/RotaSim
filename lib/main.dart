@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:file_picker/file_picker.dart';
 
 void main()=>runApp(const App());
 class App extends StatelessWidget{const App({super.key});@override Widget build(BuildContext c)=>MaterialApp(debugShowCheckedModeBanner:false,title:'RotaSim V3',theme:ThemeData(colorSchemeSeed:const Color(0xFF8B3DFF),useMaterial3:true,brightness:Brightness.dark),home:const Home());}
@@ -18,7 +19,8 @@ class Home extends StatefulWidget{const Home({super.key});@override State<Home> 
 class _Home extends State<Home>{
  final mc=MapController(); final pts=<LatLng>[]; final stops=<Stop>[]; final undo=<LatLng>[]; final D=const Distance();
  int mapMode=0; // 0 Yol, 1 Uydu HD (Esri), 2 Güncel Uydu (NASA VIIRS)
- bool drawing=false,playing=false,smooth=true,freehandActive=false,autoEnd=true,routeFinished=false,addingStop=false,mapError=false; int activePointers=0,flowStep=0,mapRetry=0; LatLng? me; int playIndex=0; Timer? timer;
+ bool drawing=false,playing=false,smooth=true,freehandActive=false,autoEnd=true,routeFinished=false,addingStop=false,mapError=false,editingPoints=false; int activePointers=0,flowStep=0,mapRetry=0; LatLng? me; int playIndex=0; Timer? timer;
+ final mapGestureKey=GlobalKey();
  DateTime start=DateTime.now(),end=DateTime.now().add(const Duration(hours:1));
  final speedC=TextEditingController(text:'5.0'),distanceC=TextEditingController();
  double get actualKm{double m=0;for(int i=1;i<pts.length;i++)m+=D(pts[i-1],pts[i]);return m/1000;}
@@ -56,23 +58,92 @@ class _Home extends State<Home>{
    mc.fitCamera(CameraFit.coordinates(coordinates:List<LatLng>.of(pts),padding:const EdgeInsets.all(48),maxZoom:17,minZoom:5));
   });
  }
- void nextToPreview(){setState(()=>flowStep=2);fitRoute();}
+ void nextToPreview(){setState((){flowStep=2;editingPoints=false;});fitRoute();}
  void restoreRoute(Map<String,dynamic> j,{bool edit=false}){
   setState((){
    pts..clear()..addAll((j['pts'] as List).map((e)=>LatLng((e[0] as num).toDouble(),(e[1] as num).toDouble())));
    stops..clear()..addAll((j['stops'] as List? ?? const []).map((e)=>Stop((e['i'] as num).toInt(),(e['s'] as num).toInt())));
    start=DateTime.parse(j['start']);end=DateTime.parse(j['end']);
    speedC.text=(j['speed']??'5.0').toString();distanceC.text=(j['distance']??actualKm.toStringAsFixed(2)).toString();
-   autoEnd=(j['autoEnd'] as bool?)??false;drawing=edit;routeFinished=!edit;addingStop=false;flowStep=0;
+   autoEnd=(j['autoEnd'] as bool?)??false;drawing=false;editingPoints=edit;routeFinished=true;addingStop=false;flowStep=0;
   });
   fitRoute();
+ }
+
+ List<LatLng> parseTrackFile(String name,String source){
+  final ext=name.split('.').last.toLowerCase();
+  final xmlPoints=List<LatLng>.empty(growable:true);
+  List<LatLng> readXmlPoints(String tag){
+   final out=<LatLng>[];
+   final tags=RegExp('<(?:[A-Za-z_][\\w.-]*:)?$tag\\b([^>]*)>',caseSensitive:false).allMatches(source);
+   for(final match in tags){
+    final attributes=match.group(1)??'';
+    final lat=RegExp(r'''\blat\s*=\s*["']([^"']+)["']''',caseSensitive:false).firstMatch(attributes)?.group(1);
+    final lon=RegExp(r'''\blon\s*=\s*["']([^"']+)["']''',caseSensitive:false).firstMatch(attributes)?.group(1);
+    final latitude=double.tryParse(lat??''),longitude=double.tryParse(lon??'');
+    if(latitude!=null&&longitude!=null&&latitude.abs()<=90&&longitude.abs()<=180)out.add(LatLng(latitude,longitude));
+   }
+   return out;
+  }
+  List<LatLng> readCoordinates(dynamic raw){
+   final out=<LatLng>[];
+   if(raw is List&&raw.isNotEmpty&&raw.first is List){
+    for(final item in raw){
+     if(item is List&&item.length>=2){final lon=(item[0] as num).toDouble(),lat=(item[1] as num).toDouble();if(lat.abs()<=90&&lon.abs()<=180)out.add(LatLng(lat,lon));}
+    }
+   }
+   return out;
+  }
+  if(ext=='gpx'||source.toLowerCase().contains('<gpx')){
+   final tracks=readXmlPoints('trkpt');if(tracks.isNotEmpty)return tracks;
+   return readXmlPoints('rtept');
+  }
+  if(ext=='kml'||source.toLowerCase().contains('<kml')){
+   final coordinates=RegExp(r'<(?:[A-Za-z_][\w.-]*:)?coordinates\b[^>]*>([\s\S]*?)</(?:[A-Za-z_][\w.-]*:)?coordinates\s*>',caseSensitive:false).firstMatch(source)?.group(1);
+   if(coordinates!=null){for(final pair in coordinates.trim().split(RegExp(r'\s+'))){final values=pair.split(',');if(values.length<2)continue;final lon=double.tryParse(values[0]),lat=double.tryParse(values[1]);if(lat!=null&&lon!=null&&lat.abs()<=90&&lon.abs()<=180)xmlPoints.add(LatLng(lat,lon));}}
+   return xmlPoints;
+  }
+  if(ext=='csv'){
+   for(final line in const LineSplitter().convert(source).skip(1)){final columns=line.split(',');if(columns.length<3)continue;final lat=double.tryParse(columns[1].trim()),lon=double.tryParse(columns[2].trim());if(lat!=null&&lon!=null&&lat.abs()<=90&&lon.abs()<=180)xmlPoints.add(LatLng(lat,lon));}
+   return xmlPoints;
+  }
+  dynamic decoded;try{decoded=jsonDecode(source);}on FormatException{return xmlPoints;}
+  if(decoded is Map){
+   if(decoded['points'] is List){for(final point in decoded['points'] as List){if(point is Map&&point['lat'] is num&&point['lon'] is num)xmlPoints.add(LatLng((point['lat'] as num).toDouble(),(point['lon'] as num).toDouble()));}}
+   if(xmlPoints.isEmpty&&decoded['pts'] is List){for(final point in decoded['pts'] as List){if(point is List&&point.length>=2&&point[0] is num&&point[1] is num)xmlPoints.add(LatLng((point[0] as num).toDouble(),(point[1] as num).toDouble()));}}
+   if(xmlPoints.isEmpty&&decoded['type']=='FeatureCollection'&&decoded['features'] is List){for(final feature in decoded['features'] as List){final geometry=feature is Map?feature['geometry']:null;if(geometry is Map&&geometry['type']=='LineString'){xmlPoints.addAll(readCoordinates(geometry['coordinates']));if(xmlPoints.isNotEmpty)break;}}}
+   if(xmlPoints.isEmpty&&decoded['type']=='Feature'&&decoded['geometry'] is Map){final geometry=decoded['geometry'] as Map;if(geometry['type']=='LineString')xmlPoints.addAll(readCoordinates(geometry['coordinates']));}
+   if(xmlPoints.isEmpty&&decoded['type']=='LineString')xmlPoints.addAll(readCoordinates(decoded['coordinates']));
+  }
+  return xmlPoints;
+ }
+ Future<void> importTrack()async{
+  try{
+   final result=await FilePicker.platform.pickFiles(type:FileType.custom,allowedExtensions:const ['gpx','kml','geojson','csv','json','rotasim'],allowMultiple:false,withData:true);
+   if(result==null||result.files.isEmpty)return;
+   final file=result.files.single;final bytes=file.bytes??(file.path==null?throw const FormatException('Dosya okunamadı.'):await File(file.path!).readAsBytes());
+   final imported=parseTrackFile(file.name,utf8.decode(bytes,allowMalformed:false));
+   if(imported.length<2)throw const FormatException('Dosyada en az iki geçerli rota noktası bulunamadı.');
+   if(pts.isNotEmpty){final replace=await showDialog<bool>(context:context,builder:(dialog)=>AlertDialog(title:const Text('Açık rotayı değiştir?'),content:const Text('İçe aktarılan rota ekranda açılacak. Kayıtlı rotalar ve seçtiğiniz kaynak dosya değiştirilmez.'),actions:[TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('VAZGEÇ')),FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('ROTAYI AÇ'))]));if(replace!=true)return;}
+   setState((){pts..clear()..addAll(imported);stops.clear();undo.clear();start=DateTime.now();distanceC.text=actualKm.toStringAsFixed(2);speedC.text='5.0';autoEnd=true;syncEnd();routeFinished=true;drawing=false;editingPoints=true;addingStop=false;flowStep=0;mapError=false;mapRetry++;});
+   fitRoute();
+   if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('${file.name} yüklendi. Mor rota noktalarını sürükleyerek düzenleyebilirsiniz.')));
+  }on FormatException catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(e.message.toString())));}
+  catch(_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Rota dosyası açılamadı. GPX, KML, GeoJSON, CSV veya RotaSim dosyası seçin.')));}
+ }
+ void moveRoutePoint(int index,Offset global){
+  if(!editingPoints||index<0||index>=pts.length)return;
+  final context=mapGestureKey.currentContext,render=context?.findRenderObject();
+  if(render is! RenderBox)return;
+  final local=render.globalToLocal(global),point=mc.camera.screenOffsetToLatLng(local);
+  setState((){pts[index]=point;distanceC.text=actualKm.toStringAsFixed(2);syncEnd();});
  }
 
  @override void dispose(){timer?.cancel();speedC.dispose();distanceC.dispose();super.dispose();}
  void add(LatLng p){if(!drawing||routeFinished)return;setState((){pts.add(p);undo.clear();if(smooth&&pts.length>2){final a=pts[pts.length-3],b=pts[pts.length-2],d=pts.last;pts[pts.length-2]=LatLng((a.latitude+b.latitude*2+d.latitude)/4,(a.longitude+b.longitude*2+d.longitude)/4);}distanceC.text=actualKm.toStringAsFixed(2);syncEnd();});}
  void freehandPoint(Offset local){if(!drawing||!freehandActive||activePointers!=1)return;final p=mc.camera.screenOffsetToLatLng(local);if(pts.isNotEmpty&&D(pts.last,p)<2)return;add(p);}
- void clearRoute(){setState((){pts.clear();stops.clear();undo.clear();distanceC.clear();routeFinished=false;drawing=false;syncEnd();});}
- void finishHere(){if(pts.length<2)return;setState((){routeFinished=true;drawing=false;freehandActive=false;syncEnd();});}
+ void clearRoute(){setState((){pts.clear();stops.clear();undo.clear();distanceC.clear();routeFinished=false;drawing=false;editingPoints=false;syncEnd();});}
+ void finishHere(){if(pts.length<2)return;setState((){routeFinished=true;drawing=false;editingPoints=false;freehandActive=false;syncEnd();});}
  void closeAndFinish(){if(pts.length<3)return;setState((){if(D(pts.last,pts.first)>0.5)pts.add(pts.first);distanceC.text=actualKm.toStringAsFixed(2);routeFinished=true;drawing=false;freehandActive=false;syncEnd();});}
  void back(){if(pts.isEmpty)return;setState((){undo.add(pts.removeLast());stops.removeWhere((s)=>s.index>=pts.length);distanceC.text=actualKm.toStringAsFixed(2);});}
  void forward(){if(undo.isEmpty)return;setState((){pts.add(undo.removeLast());distanceC.text=actualKm.toStringAsFixed(2);});}
@@ -208,6 +279,7 @@ class _Home extends State<Home>{
  @override
  Widget build(BuildContext c){
   const purple=Color(0xFF8B3DFF),bg=Color(0xFF090D14),card=Color(0xFF141A23),mapBg=Color(0xFF17212B);
+  final editStride=pts.length>80?(pts.length+79)~/80:1;
   Widget logo()=>RichText(text:const TextSpan(style:TextStyle(fontSize:24,fontWeight:FontWeight.w800),children:[TextSpan(text:'Rota',style:TextStyle(color:Colors.white)),TextSpan(text:'Sim',style:TextStyle(color:purple))]));
   Widget stepper()=>Padding(padding:const EdgeInsets.fromLTRB(16,8,16,12),child:Row(children:List.generate(4,(i)=>Expanded(child:Column(children:[
    Row(children:[if(i>0)Expanded(child:Container(height:2,color:i<=flowStep?purple:Colors.white24)),CircleAvatar(radius:11,backgroundColor:i<=flowStep?purple:Colors.white24,child:i<flowStep?const Icon(Icons.check,size:13):Text('${i+1}',style:const TextStyle(fontSize:10))),if(i<3)Expanded(child:Container(height:2,color:i<flowStep?purple:Colors.white24))]),
@@ -218,6 +290,7 @@ class _Home extends State<Home>{
    if(backBtn)IconButton(tooltip:'Geri',onPressed:()=>setState(()=>flowStep=flowStep>0?flowStep-1:0),icon:const Icon(Icons.arrow_back)),
    if(title!=null)Text(title,style:const TextStyle(fontSize:18,fontWeight:FontWeight.bold))else logo(),
    const Spacer(),
+   if(title==null)IconButton(tooltip:'Rota dosyası içe aktar',onPressed:importTrack,icon:const Icon(Icons.file_open_outlined)),
    TextButton.icon(onPressed:()=>setState((){mapMode=mapMode==0?1:0;mapError=false;}),icon:Icon(mapMode==0?Icons.satellite_alt_outlined:Icons.map_outlined),label:Text(mapMode==0?'Uydu':'Harita')),
    IconButton(tooltip:'Kayıtlı Rotalar',onPressed:saved,icon:const Icon(Icons.bookmarks_outlined)),
   ])));
@@ -232,14 +305,14 @@ class _Home extends State<Home>{
    onPointerMove:(e){if(activePointers==1)freehandPoint(e.localPosition);},
    onPointerUp:(_){activePointers=(activePointers-1).clamp(0,10);freehandActive=false;},
    onPointerCancel:(_){activePointers=(activePointers-1).clamp(0,10);freehandActive=false;},
-   child:FlutterMap(
+  child:KeyedSubtree(key:mapGestureKey,child:FlutterMap(
     key:ValueKey('rotasim-map-retry-$mapRetry'),
     mapController:mc,
     options:MapOptions(
      initialCenter:pts.isNotEmpty?pts.first:(me??const LatLng(39.93,32.86)),
      initialZoom:pts.isNotEmpty?14:(me!=null?16:12),
      backgroundColor:mapBg,
-     interactionOptions:InteractionOptions(flags:drawing&&flowStep==0?(InteractiveFlag.pinchMove|InteractiveFlag.pinchZoom):InteractiveFlag.all,enableMultiFingerGestureRace:true),
+     interactionOptions:InteractionOptions(flags:(drawing||editingPoints)&&flowStep==0?(InteractiveFlag.pinchMove|InteractiveFlag.pinchZoom):InteractiveFlag.all,enableMultiFingerGestureRace:true),
      onTap:(position,point){if(addingStop)unawaited(selectStopAt(point));},
     ),
     children:[
@@ -258,13 +331,15 @@ class _Home extends State<Home>{
      if(pts.isNotEmpty)PolylineLayer(polylines:[Polyline(points:pts,strokeWidth:9,color:const Color(0x558B3DFF)),Polyline(points:pts,strokeWidth:4,color:purple)]),
      MarkerLayer(markers:[
       if(me!=null)Marker(point:me!,width:38,height:38,child:const Icon(Icons.my_location,color:Colors.blueAccent)),
-      if(pts.isNotEmpty)Marker(point:pts.first,width:36,height:36,child:const Icon(Icons.circle,color:Colors.greenAccent,size:28)),
-      if(pts.length>1)Marker(point:pts.last,width:36,height:36,child:const Icon(Icons.location_on,color:Colors.redAccent,size:34)),
+      if(pts.isNotEmpty&&!editingPoints)Marker(point:pts.first,width:36,height:36,child:const Icon(Icons.circle,color:Colors.greenAccent,size:28)),
+      if(pts.length>1&&!editingPoints)Marker(point:pts.last,width:36,height:36,child:const Icon(Icons.location_on,color:Colors.redAccent,size:34)),
       for(final st in stops)if(st.index>=0&&st.index<pts.length)Marker(point:pts[st.index],width:34,height:34,child:const Icon(Icons.circle,color:Colors.orangeAccent,size:24)),
-      if(playing&&pts.isNotEmpty)Marker(point:pts[playIndex.clamp(0,pts.length-1).toInt()],width:38,height:38,child:const Icon(Icons.directions_walk,color:Colors.white,size:34)),
+      if(editingPoints&&flowStep==0)for(var i=0;i<pts.length;i+=editStride)Marker(point:pts[i],width:48,height:48,child:GestureDetector(behavior:HitTestBehavior.opaque,onPanUpdate:(d)=>moveRoutePoint(i,d.globalPosition),child:Center(child:Container(width:18,height:18,decoration:BoxDecoration(color:i==0?Colors.greenAccent:i==pts.length-1?Colors.redAccent:purple,shape:BoxShape.circle,border:Border.all(color:Colors.white,width:2),boxShadow:const [BoxShadow(color:Colors.black54,blurRadius:5)]))))),
+      if(editingPoints&&flowStep==0&&(pts.length-1)%editStride!=0)Marker(point:pts.last,width:48,height:48,child:GestureDetector(behavior:HitTestBehavior.opaque,onPanUpdate:(d)=>moveRoutePoint(pts.length-1,d.globalPosition),child:Center(child:Container(width:18,height:18,decoration:BoxDecoration(color:Colors.redAccent,shape:BoxShape.circle,border:Border.all(color:Colors.white,width:2),boxShadow:const [BoxShadow(color:Colors.black54,blurRadius:5)]))))),
+     if(playing&&pts.isNotEmpty)Marker(point:pts[playIndex.clamp(0,pts.length-1).toInt()],width:38,height:38,child:const Icon(Icons.directions_walk,color:Colors.white,size:34)),
      ]),
     ],
-   ),
+   )),
   );
   if(flowStep==0){
    return Scaffold(
@@ -272,6 +347,7 @@ class _Home extends State<Home>{
     body:SizedBox.expand(child:Stack(fit:StackFit.expand,clipBehavior:Clip.hardEdge,children:[
      Positioned.fill(child:RepaintBoundary(child:mapWidget())),
      Positioned(left:0,right:0,top:0,child:topBar()),
+     if(editingPoints&&!mapError)Positioned(left:64,right:60,top:0,child:SafeArea(child:Container(margin:const EdgeInsets.only(top:66),padding:const EdgeInsets.symmetric(horizontal:10,vertical:8),decoration:BoxDecoration(color:bg.withValues(alpha:.92),borderRadius:BorderRadius.circular(12)),child:const Text('Rota noktalarını sürükleyin. Haritayı iki parmakla taşıyın.',textAlign:TextAlign.center,style:TextStyle(fontSize:12))))),
      if(!drawing&&!addingStop)Positioned(left:10,top:0,child:SafeArea(child:Padding(padding:const EdgeInsets.only(top:64),child:DecoratedBox(decoration:BoxDecoration(color:bg.withValues(alpha:.58),borderRadius:BorderRadius.circular(6)),child:Padding(padding:const EdgeInsets.symmetric(horizontal:6,vertical:3),child:Text(mapMode==0?'© OpenStreetMap contributors':'© Esri World Imagery',style:const TextStyle(fontSize:9,color:Colors.white70))))))),
      Positioned(right:10,top:0,child:SafeArea(child:Padding(padding:const EdgeInsets.only(top:68),child:Column(children:[
       IconButton.filledTonal(tooltip:'Konumuma git',onPressed:locate,icon:const Icon(Icons.my_location)),
@@ -288,10 +364,10 @@ class _Home extends State<Home>{
      if(addingStop)Positioned(left:16,right:16,top:0,child:SafeArea(child:Container(margin:const EdgeInsets.only(top:68),padding:const EdgeInsets.symmetric(horizontal:14,vertical:10),decoration:BoxDecoration(color:bg.withValues(alpha:.92),borderRadius:BorderRadius.circular(12)),child:const Text('Durak eklemek için çizilen rotanın üzerindeki noktaya dokunun.',textAlign:TextAlign.center,style:TextStyle(fontSize:13))))),
      if(mapError)Positioned(left:20,right:20,top:0,child:SafeArea(child:Container(margin:const EdgeInsets.only(top:72),padding:const EdgeInsets.symmetric(horizontal:14,vertical:10),decoration:BoxDecoration(color:bg.withValues(alpha:.94),borderRadius:BorderRadius.circular(14),border:Border.all(color:Colors.white12)),child:Row(children:[const Expanded(child:Text('Harita yüklenemedi. İnternet bağlantınızı kontrol edip yeniden deneyin.',style:TextStyle(fontSize:13))),TextButton(onPressed:retryMap,child:const Text('YENİDEN DENE'))])))),
      Positioned(left:16,right:16,bottom:0,child:SafeArea(top:false,child:Padding(padding:const EdgeInsets.only(bottom:12),child:Column(mainAxisSize:MainAxisSize.min,children:[
-      if(pts.isNotEmpty&&!addingStop)Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.symmetric(horizontal:12,vertical:8),decoration:BoxDecoration(color:bg.withValues(alpha:.91),borderRadius:BorderRadius.circular(12)),child:Row(children:[const Icon(Icons.alt_route,color:purple),const SizedBox(width:8),Text('${actualKm.toStringAsFixed(2)} km'),const Spacer(),if(!drawing)TextButton(onPressed:()=>setState((){drawing=true;routeFinished=false;}),child:Text(routeFinished?'DÜZENLE':'DEVAM ET'))])),
+      if(pts.isNotEmpty&&!addingStop)Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.symmetric(horizontal:8,vertical:3),decoration:BoxDecoration(color:bg.withValues(alpha:.91),borderRadius:BorderRadius.circular(12)),child:Row(children:[const Icon(Icons.alt_route,color:purple),const SizedBox(width:6),Text('${actualKm.toStringAsFixed(2)} km'),const Spacer(),if(!drawing)IconButton(tooltip:editingPoints?'Nokta düzenlemeyi bitir':'Rota noktalarını taşı',onPressed:()=>setState(()=>editingPoints=!editingPoints),icon:Icon(editingPoints?Icons.done:Icons.edit_location_alt_outlined)),if(!drawing)TextButton(onPressed:()=>setState((){drawing=true;editingPoints=false;routeFinished=false;}),child:Text(routeFinished?'ÇİZİMLE DÜZENLE':'DEVAM ET'))])),
       if(addingStop)Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.symmetric(horizontal:12,vertical:8),decoration:BoxDecoration(color:bg.withValues(alpha:.91),borderRadius:BorderRadius.circular(12)),child:const Text('Durak yerini seçin',textAlign:TextAlign.center)),
       SizedBox(width:double.infinity,height:54,child:FilledButton(
-       onPressed:addingStop?()=>setState(()=>addingStop=false):pts.length>=2?(){finishHere();setState(()=>flowStep=1);}:()=>setState((){drawing=true;routeFinished=false;}),
+       onPressed:addingStop?()=>setState(()=>addingStop=false):pts.length>=2?(){finishHere();setState(()=>flowStep=1);}:()=>setState((){drawing=true;editingPoints=false;routeFinished=false;}),
        style:FilledButton.styleFrom(backgroundColor:purple),
        child:Text(addingStop?'VAZGEÇ':pts.length>=2?(drawing?'BİTİR VE DEVAM ET':'SONRAKİ  →'):(pts.isEmpty?'ROTA ÇİZMEYE BAŞLA':'ÇİZİME DEVAM ET'),style:const TextStyle(fontWeight:FontWeight.bold,letterSpacing:.3)),
       )),
