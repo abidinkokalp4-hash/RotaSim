@@ -17,6 +17,9 @@ dependencies:
   geolocator: ^14.0.2
   shared_preferences: ^2.5.3
   archive: ^4.0.7
+dependency_overrides:
+  maplibre_android: 0.3.5
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
