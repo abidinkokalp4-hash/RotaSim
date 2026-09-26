@@ -20,6 +20,8 @@ void main()=>runApp(const App());
 class App extends StatelessWidget{const App({super.key});@override Widget build(BuildContext c)=>MaterialApp(debugShowCheckedModeBanner:false,title:'RotaSim V3',theme:ThemeData(colorSchemeSeed:const Color(0xFF8B3DFF),useMaterial3:true,brightness:Brightness.dark),home:const Home());}
 class Stop{final int index;final int sec;Stop(this.index,this.sec);Map<String,dynamic> toJson()=>{'i':index,'s':sec};}
 const bool googleMapsConfigured=bool.fromEnvironment('GOOGLE_MAPS_CONFIGURED',defaultValue:false);
+const String mapTilerApiKey=String.fromEnvironment('MAPTILER_API_KEY',defaultValue:'');
+bool get mapTilerConfigured=>mapTilerApiKey.isNotEmpty;
 enum _RouteDragKind{none,point,segment,whole}
 class _RouteHit{const _RouteHit(this.index,this.t,this.point,this.distance);final int index;final double t;final Offset point;final double distance;}
 class Home extends StatefulWidget{const Home({super.key});@override State<Home> createState()=>_Home();}
@@ -29,9 +31,9 @@ class _Home extends State<Home>{
  final Map<int,Offset> _mapPointers=<int,Offset>{};
  Offset? _lastMultiPointerCenter;
  MapController get mc=>_mapControllers[flowStep];
- bool get _usingGoogleMap=>googleMapsConfigured&&mapMode>=3;
+ bool get _usingGoogleMap=>googleMapsConfigured&&mapMode>=4;
  final pts=<LatLng>[]; final stops=<Stop>[]; final undo=<LatLng>[]; final D=const Distance();
- int mapMode=0; // 0 Yol, 1 Uydu HD (Esri), 2 Sentinel-2 cloudless (EOX, 2025)
+ int mapMode=0; // 0 Yol, 1 Esri, 2 Sentinel-2, 3 MapTiler uydu, 4-5 Google
  bool drawing=false,playing=false,smooth=true,freehandActive=false,autoEnd=true,routeFinished=false,addingStop=false,mapError=false,editingPoints=false,moveWholeRoute=false; int activePointers=0,flowStep=0,mapRetry=0; LatLng? me; int playIndex=0; Timer? timer;
  final mapGestureKeys=List<GlobalKey>.generate(4,(_)=>GlobalKey());
  _RouteDragKind routeDragKind=_RouteDragKind.none; int routeDragIndex=-1; double routeDragT=0,routeDragCenterDistance=0; LatLng? routeDragAnchor; List<LatLng>? routeDragOriginal; List<double> routeDragDistances=const[];
@@ -58,6 +60,10 @@ class _Home extends State<Home>{
   }catch(_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('EOX kaynak sayfası açılamadı.')));}
  }
 
+ Future<void> openMapTilerAttribution()async{
+  try{await launchUrl(Uri.parse('https://www.maptiler.com/copyright/'),mode:LaunchMode.externalApplication);}
+  catch(_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('MapTiler kaynak sayfası açılamadı.')));}
+ }
  Future<void> selectStopAt(LatLng point)async{
   if(pts.length<2)return;
   final screenPoint=mc.camera.latLngToScreenOffset(point);
@@ -491,12 +497,13 @@ class _Home extends State<Home>{
      const PopupMenuItem<int>(value:0,child:Text('Yol haritası')),
      const PopupMenuItem<int>(value:1,child:Text('Uydu • Esri')),
      const PopupMenuItem<int>(value:2,child:Text('Uydu • Sentinel-2 (2025)')),
-     if(googleMapsConfigured)...const [PopupMenuItem<int>(value:3,child:Text('Google • Uydu')),PopupMenuItem<int>(value:4,child:Text('Google • Hibrit'))] else const PopupMenuItem<int>(enabled:false,child:Text('Google için Actions API anahtarı gerekli')),
+     if(mapTilerConfigured)const PopupMenuItem<int>(value:3,child:Text('Uydu • MapTiler Free')) else const PopupMenuItem<int>(enabled:false,child:Text('MapTiler için ücretsiz API anahtarı gerekli')),
+     if(googleMapsConfigured)...const [PopupMenuItem<int>(value:4,child:Text('Google • Uydu')),PopupMenuItem<int>(value:5,child:Text('Google • Hibrit'))] else const PopupMenuItem<int>(enabled:false,child:Text('Google için Actions API anahtarı gerekli')),
     ],
     child:Padding(padding:const EdgeInsets.symmetric(horizontal:7),child:Row(mainAxisSize:MainAxisSize.min,children:[
      Icon(mapMode==0?Icons.map_outlined:Icons.satellite_alt_outlined,color:const Color(0xFFD5B9FF)),
      const SizedBox(width:3),
-     Text(mapMode==0?'Harita':mapMode==1?'Esri':mapMode==2?'S2':mapMode==3?'G. Uydu':'G. Hibrit',style:const TextStyle(color:Color(0xFFD5B9FF),fontWeight:FontWeight.w600)),
+     Text(mapMode==0?'Harita':mapMode==1?'Esri':mapMode==2?'S2':mapMode==3?'M. Uydu':mapMode==4?'G. Uydu':'G. Hibrit',style:const TextStyle(color:Color(0xFFD5B9FF),fontWeight:FontWeight.w600)),
      const Icon(Icons.arrow_drop_down,color:Color(0xFFD5B9FF)),
     ])),
    ),
@@ -534,6 +541,13 @@ class _Home extends State<Home>{
       evictErrorTileStrategy:EvictErrorTileStrategy.notVisibleRespectMargin,
       errorTileCallback:(tile,error,stack){if(mounted&&!mapError)setState(()=>mapError=true);},
      ),
+     if(mapMode==3&&mapTilerConfigured)TileLayer(
+      urlTemplate:'https://api.maptiler.com/maps/satellite-v4/{z}/{x}/{y}.jpg?key=$mapTilerApiKey',
+      userAgentPackageName:'com.rotasim.rotasim',
+      maxNativeZoom:22,
+      evictErrorTileStrategy:EvictErrorTileStrategy.notVisibleRespectMargin,
+      errorTileCallback:(tile,error,stack){if(mounted&&!mapError)setState(()=>mapError=true);},
+     ),
      if(pts.isNotEmpty)PolylineLayer(polylines:[Polyline(points:pts,strokeWidth:9,color:const Color(0x558B3DFF)),Polyline(points:pts,strokeWidth:4,color:purple)]),
      MarkerLayer(markers:[
       if(me!=null)Marker(point:me!,width:38,height:38,child:const Icon(Icons.my_location,color:Colors.blueAccent)),
@@ -551,7 +565,7 @@ class _Home extends State<Home>{
    gmaps.GoogleMap(
     key:ValueKey('rotasim-google-$flowStep-$mapRetry'),
     initialCameraPosition:_initialGoogleCamera(),
-    mapType:mapMode==3?gmaps.MapType.satellite:gmaps.MapType.hybrid,
+    mapType:mapMode==4?gmaps.MapType.satellite:gmaps.MapType.hybrid,
     compassEnabled:false,
     mapToolbarEnabled:false,
     zoomControlsEnabled:false,
@@ -608,14 +622,14 @@ class _Home extends State<Home>{
       child:SafeArea(child:Padding(
        padding:const EdgeInsets.only(top:64),
        child:InkWell(
-        onTap:mapMode==2?openSentinelSource:null,
+        onTap:mapMode==2?openSentinelSource:mapMode==3?openMapTilerAttribution:null,
         borderRadius:BorderRadius.circular(6),
         child:DecoratedBox(
          decoration:BoxDecoration(color:bg.withValues(alpha:.58),borderRadius:BorderRadius.circular(6)),
          child:Padding(
           padding:const EdgeInsets.symmetric(horizontal:6,vertical:3),
           child:Text(
-           mapMode==0?'© OpenMapTiles • © OpenStreetMap contributors':mapMode==1?'© Esri World Imagery':mapMode==2?'© EOxCloudless • Copernicus Sentinel-2 (2025) ↗':'© Google Maps',
+           mapMode==0?'© OpenMapTiles • © OpenStreetMap contributors':mapMode==1?'© Esri World Imagery':mapMode==2?'© EOxCloudless • Copernicus Sentinel-2 (2025) ↗':mapMode==3?'MapTiler • Uydu görüntüsü ↗':'© Google Maps',
            maxLines:1,overflow:TextOverflow.ellipsis,
            style:const TextStyle(fontSize:9,color:Colors.white70),
           ),
@@ -637,7 +651,7 @@ class _Home extends State<Home>{
       IconButton.filledTonal(tooltip:'Temizle',onPressed:clearRoute,icon:const Icon(Icons.delete_outline)),
      ])))),
      if(addingStop)Positioned(left:16,right:16,top:0,child:SafeArea(child:Container(margin:const EdgeInsets.only(top:68),padding:const EdgeInsets.symmetric(horizontal:14,vertical:10),decoration:BoxDecoration(color:bg.withValues(alpha:.92),borderRadius:BorderRadius.circular(12)),child:const Text('Durak eklemek için çizilen rotanın üzerindeki noktaya dokunun.',textAlign:TextAlign.center,style:TextStyle(fontSize:13))))),
-     if(mapError)Positioned(left:20,right:20,top:0,child:SafeArea(child:Container(margin:const EdgeInsets.only(top:72),padding:const EdgeInsets.symmetric(horizontal:14,vertical:10),decoration:BoxDecoration(color:bg.withValues(alpha:.94),borderRadius:BorderRadius.circular(14),border:Border.all(color:Colors.white12)),child:Row(children:[const Expanded(child:Text('Harita yüklenemedi. İnternet bağlantınızı kontrol edip yeniden deneyin.',style:TextStyle(fontSize:13))),TextButton(onPressed:retryMap,child:const Text('YENİDEN DENE'))])))),
+     if(mapError)Positioned(left:20,right:20,top:0,child:SafeArea(child:Container(margin:const EdgeInsets.only(top:72),padding:const EdgeInsets.symmetric(horizontal:14,vertical:10),decoration:BoxDecoration(color:bg.withValues(alpha:.94),borderRadius:BorderRadius.circular(14),border:Border.all(color:Colors.white12)),child:Row(children:[Expanded(child:Text(mapMode==3?'Uydu haritası yüklenemedi. İnternet bağlantısını, API anahtarını ve ücretsiz aylık kotayı kontrol edip yeniden deneyin.':'Harita yüklenemedi. İnternet bağlantınızı kontrol edip yeniden deneyin.',style:const TextStyle(fontSize:13))),TextButton(onPressed:retryMap,child:const Text('YENİDEN DENE'))])))),
      Positioned(left:16,right:16,bottom:0,child:SafeArea(top:false,child:Padding(padding:const EdgeInsets.only(bottom:12),child:Column(mainAxisSize:MainAxisSize.min,children:[
       if(pts.isNotEmpty&&!addingStop)Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),decoration:BoxDecoration(color:bg.withValues(alpha:.93),borderRadius:BorderRadius.circular(12)),child:Column(mainAxisSize:MainAxisSize.min,children:[Row(children:[const Icon(Icons.alt_route,color:purple),const SizedBox(width:6),Text('${actualKm.toStringAsFixed(2)} km'),const Spacer(),if(!drawing)IconButton(tooltip:editingPoints?'Düzenlemeyi bitir':'Rotayı düzenle',onPressed:()=>setState(()=>editingPoints=!editingPoints),icon:Icon(editingPoints?Icons.done:Icons.edit_location_alt_outlined)),if(!drawing)TextButton(onPressed:()=>setState((){drawing=true;editingPoints=false;routeFinished=false;}),child:Text(routeFinished?'ÇİZİMLE DÜZENLE':'DEVAM ET'))]),if(editingPoints)Row(children:[Expanded(child:ChoiceChip(label:const Text('BÖLÜMÜ DÜZENLE',style:TextStyle(fontSize:10)),selected:!moveWholeRoute,onSelected:(_)=>setState(()=>moveWholeRoute=false))),const SizedBox(width:8),Expanded(child:ChoiceChip(label:const Text('TÜM ROTAYI TAŞI',style:TextStyle(fontSize:10)),selected:moveWholeRoute,onSelected:(_)=>setState(()=>moveWholeRoute=true)))])])),
       if(addingStop)Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.symmetric(horizontal:12,vertical:8),decoration:BoxDecoration(color:bg.withValues(alpha:.91),borderRadius:BorderRadius.circular(12)),child:const Text('Durak yerini seçin',textAlign:TextAlign.center)),
