@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_map_maplibre/flutter_map_maplibre.dart' show MapLibreLayer;
 import 'package:archive/archive_io.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:intl/intl.dart';
@@ -451,16 +452,14 @@ class _Home extends State<Home>{
      initialCenter:pts.isNotEmpty?pts[pts.length~/2]:(me??const LatLng(39.93,32.86)),
      initialZoom:pts.isNotEmpty?14:(me!=null?16:12),
      backgroundColor:mapBg,
+     cameraConstraint:CameraConstraint.contain(bounds:LatLngBounds(const LatLng(-85.05112878,-180),const LatLng(85.05112878,180))),
      interactionOptions:InteractionOptions(flags:(drawing||editingPoints)&&flowStep==0?(InteractiveFlag.pinchMove|InteractiveFlag.pinchZoom):InteractiveFlag.all,enableMultiFingerGestureRace:true),
      onMapReady:fitRoute,
      onTap:(position,point){if(addingStop)unawaited(selectStopAt(point));},
     ),
     children:[
-     if(mapMode==0)TileLayer(
-      urlTemplate:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      userAgentPackageName:'com.rotasim.rotasim',maxZoom:19,tileDisplay:const TileDisplay.fadeIn(),
-      evictErrorTileStrategy:EvictErrorTileStrategy.notVisibleRespectMargin,
-      errorTileCallback:(tile,error,stack){if(mounted&&!mapError)setState(()=>mapError=true);},
+     if(mapMode==0)const MapLibreLayer(
+      initStyle:'https://tiles.openfreemap.org/styles/liberty',
      ),
      if(mapMode==1)TileLayer(
       urlTemplate:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -488,7 +487,7 @@ class _Home extends State<Home>{
      Positioned.fill(child:RepaintBoundary(child:mapWidget())),
      Positioned(left:0,right:0,top:0,child:topBar()),
      if(editingPoints&&!mapError)Positioned(left:64,right:60,top:0,child:SafeArea(child:Container(margin:const EdgeInsets.only(top:66),padding:const EdgeInsets.symmetric(horizontal:10,vertical:8),decoration:BoxDecoration(color:bg.withValues(alpha:.92),borderRadius:BorderRadius.circular(12)),child:Text(moveWholeRoute?'Haritanın boş bir yerinden sürükleyerek rotanın tamamını taşıyın.':'Mor çizgiye dokunup sürükleyerek o bölümü düzenleyin. Harita için iki parmak kullanın.',textAlign:TextAlign.center,style:const TextStyle(fontSize:12))))),
-     if(!drawing&&!addingStop)Positioned(left:10,top:0,child:SafeArea(child:Padding(padding:const EdgeInsets.only(top:64),child:DecoratedBox(decoration:BoxDecoration(color:bg.withValues(alpha:.58),borderRadius:BorderRadius.circular(6)),child:Padding(padding:const EdgeInsets.symmetric(horizontal:6,vertical:3),child:Text(mapMode==0?'© OpenStreetMap contributors':'© Esri World Imagery',style:const TextStyle(fontSize:9,color:Colors.white70))))))),
+     if(!drawing&&!addingStop)Positioned(left:10,top:0,child:SafeArea(child:Padding(padding:const EdgeInsets.only(top:64),child:DecoratedBox(decoration:BoxDecoration(color:bg.withValues(alpha:.58),borderRadius:BorderRadius.circular(6)),child:Padding(padding:const EdgeInsets.symmetric(horizontal:6,vertical:3),child:Text(mapMode==0?'© OpenMapTiles • © OpenStreetMap contributors':'© Esri World Imagery',maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:9,color:Colors.white70))))))),
      Positioned(right:10,top:0,child:SafeArea(child:Padding(padding:const EdgeInsets.only(top:68),child:Column(children:[
       IconButton.filledTonal(tooltip:'Konumuma git',onPressed:locate,icon:const Icon(Icons.my_location)),
       IconButton.filledTonal(tooltip:'Yakınlaştır',onPressed:()=>mc.move(mc.camera.center,mc.camera.zoom+1),icon:const Icon(Icons.add)),
