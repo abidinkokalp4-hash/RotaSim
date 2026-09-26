@@ -28,6 +28,7 @@ jobs:
         env:
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           MAPTILER_API_KEY: ${{ secrets.MAPTILER_API_KEY }}
+          AZURE_MAPS_SUBSCRIPTION_KEY: ${{ secrets.AZURE_MAPS_SUBSCRIPTION_KEY }}
         run: |
           python3 - <<'PY'
           import os
@@ -44,6 +45,7 @@ jobs:
               s=s.replace(marker,permissions)
           key=os.environ.get('GOOGLE_MAPS_API_KEY','').strip()
           map_tiler_key=os.environ.get('MAPTILER_API_KEY','').strip()
+          azure_maps_key=os.environ.get('AZURE_MAPS_SUBSCRIPTION_KEY','').strip()
           if key and 'com.google.android.geo.API_KEY' not in s:
               app_start=s.index('<application')
               app_end=s.index('>',app_start)+1
@@ -52,6 +54,7 @@ jobs:
           with open(os.environ['GITHUB_ENV'],'a') as env_file:
               env_file.write('GOOGLE_MAPS_CONFIGURED='+('true' if key else 'false')+'\n')
               env_file.write('MAPTILER_API_KEY='+map_tiler_key+'\n')
+              env_file.write('AZURE_MAPS_SUBSCRIPTION_KEY='+azure_maps_key+'\n')
           p.write_text(s)
           PY
       - name: Get dependencies
@@ -59,7 +62,7 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-fatal-infos lib
       - name: Build release APK
-        run: flutter build apk --release --dart-define="GOOGLE_MAPS_CONFIGURED=$GOOGLE_MAPS_CONFIGURED" --dart-define="MAPTILER_API_KEY=$MAPTILER_API_KEY"
+        run: flutter build apk --release --dart-define="GOOGLE_MAPS_CONFIGURED=$GOOGLE_MAPS_CONFIGURED" --dart-define="MAPTILER_API_KEY=$MAPTILER_API_KEY" --dart-define="AZURE_MAPS_SUBSCRIPTION_KEY=$AZURE_MAPS_SUBSCRIPTION_KEY"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

@@ -22,6 +22,8 @@ class Stop{final int index;final int sec;Stop(this.index,this.sec);Map<String,dy
 const bool googleMapsConfigured=bool.fromEnvironment('GOOGLE_MAPS_CONFIGURED',defaultValue:false);
 const String mapTilerApiKey=String.fromEnvironment('MAPTILER_API_KEY',defaultValue:'');
 bool get mapTilerConfigured=>mapTilerApiKey.isNotEmpty;
+const String azureMapsSubscriptionKey=String.fromEnvironment('AZURE_MAPS_SUBSCRIPTION_KEY',defaultValue:'');
+bool get azureMapsConfigured=>azureMapsSubscriptionKey.isNotEmpty;
 enum _RouteDragKind{none,point,segment,whole}
 class _RouteHit{const _RouteHit(this.index,this.t,this.point,this.distance);final int index;final double t;final Offset point;final double distance;}
 class Home extends StatefulWidget{const Home({super.key});@override State<Home> createState()=>_Home();}
@@ -31,10 +33,11 @@ class _Home extends State<Home>{
  final Map<int,Offset> _mapPointers=<int,Offset>{};
  Offset? _lastMultiPointerCenter;
  MapController get mc=>_mapControllers[flowStep];
- bool get _usingGoogleMap=>googleMapsConfigured&&mapMode>=4;
+ bool get _usingGoogleMap=>googleMapsConfigured&&mapMode>=5;
  final pts=<LatLng>[]; final stops=<Stop>[]; final undo=<LatLng>[]; final D=const Distance();
- int mapMode=0; // 0 Yol, 1 Esri, 2 Sentinel-2, 3 MapTiler uydu, 4-5 Google
+ int mapMode=0; // 0 Yol, 1 Esri, 2 Sentinel-2, 3 MapTiler, 4 Azure Maps, 5-6 Google
  bool drawing=false,playing=false,smooth=true,freehandActive=false,autoEnd=true,routeFinished=false,addingStop=false,mapError=false,editingPoints=false,moveWholeRoute=false; int activePointers=0,flowStep=0,mapRetry=0; LatLng? me; int playIndex=0; Timer? timer;
+ String _azureAttribution='© Microsoft Azure Maps'; Timer? _azureAttributionTimer; int _azureAttributionRequest=0;
  final mapGestureKeys=List<GlobalKey>.generate(4,(_)=>GlobalKey());
  _RouteDragKind routeDragKind=_RouteDragKind.none; int routeDragIndex=-1; double routeDragT=0,routeDragCenterDistance=0; LatLng? routeDragAnchor; List<LatLng>? routeDragOriginal; List<double> routeDragDistances=const[];
  DateTime start=DateTime.now(),end=DateTime.now().add(const Duration(hours:1));
@@ -63,6 +66,49 @@ class _Home extends State<Home>{
  Future<void> openMapTilerAttribution()async{
   try{await launchUrl(Uri.parse('https://www.maptiler.com/copyright/'),mode:LaunchMode.externalApplication);}
   catch(_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('MapTiler kaynak sayfası açılamadı.')));}
+ }
+ void _scheduleAzureAttribution(){
+  if(mapMode!=4||!azureMapsConfigured)return;
+  _azureAttributionTimer?.cancel();
+  _azureAttributionTimer=Timer(const Duration(milliseconds:600),()=>unawaited(_loadAzureAttribution()));
+ }
+ Future<void> _loadAzureAttribution()async{
+  if(!mounted||mapMode!=4||!azureMapsConfigured)return;
+  final request=++_azureAttributionRequest;
+  final camera=mc.camera;
+  final bounds=camera.visibleBounds;
+  final boundsText=<double>[
+   bounds.southWest.longitude,bounds.southWest.latitude,
+   bounds.northEast.longitude,bounds.northEast.latitude,
+  ].map((value)=>value.toStringAsFixed(6)).join(',');
+  final uri=Uri.https('atlas.microsoft.com','/map/attribution',{
+   'api-version':'2024-04-01',
+   'tilesetId':'microsoft.imagery',
+   'zoom':camera.zoom.floor().clamp(1,19).toString(),
+   'bounds':boundsText,
+   'subscription-key':azureMapsSubscriptionKey,
+  });
+  final client=HttpClient();
+  try{
+   final response=await (await client.getUrl(uri)).close();
+   if(response.statusCode!=HttpStatus.ok){await response.drain<void>();return;}
+   final bytes=await response.fold<List<int>>(<int>[],(previous,chunk)=>previous..addAll(chunk));
+   final payload=jsonDecode(utf8.decode(bytes));
+   if(payload is! Map<String,dynamic>)return;
+   final raw=payload['copyrights'];
+   if(raw is! List)return;
+   final attribution=raw.whereType<String>().join(' • ')
+    .replaceAll(RegExp(r'<[^>]*>'),' ')
+    .replaceAll('&copy;','©')
+    .replaceAll('&#169;','©')
+    .replaceAll('&amp;','&')
+    .replaceAll('&nbsp;',' ')
+    .replaceAll(RegExp(r'\s+'),' ').trim();
+   if(attribution.isEmpty||!mounted||request!=_azureAttributionRequest)return;
+   setState(()=>_azureAttribution=attribution);
+  }catch(_){if(mounted&&request==_azureAttributionRequest)setState(()=>_azureAttribution='© Microsoft Azure Maps');}finally{
+   client.close(force:true);
+  }
  }
  Future<void> selectStopAt(LatLng point)async{
   if(pts.length<2)return;
@@ -263,7 +309,7 @@ class _Home extends State<Home>{
  }
  void _endRouteDrag(){routeDragKind=_RouteDragKind.none;routeDragOriginal=null;routeDragAnchor=null;routeDragDistances=const[];}
 
- @override void dispose(){timer?.cancel();for(final controller in _mapControllers){controller.dispose();}speedC.dispose();distanceC.dispose();super.dispose();}
+ @override void dispose(){timer?.cancel();_azureAttributionTimer?.cancel();for(final controller in _mapControllers){controller.dispose();}speedC.dispose();distanceC.dispose();super.dispose();}
  void add(LatLng p){if(!drawing||routeFinished)return;setState((){pts.add(p);undo.clear();if(smooth&&pts.length>2){final a=pts[pts.length-3],b=pts[pts.length-2],d=pts.last;pts[pts.length-2]=LatLng((a.latitude+b.latitude*2+d.latitude)/4,(a.longitude+b.longitude*2+d.longitude)/4);}distanceC.text=actualKm.toStringAsFixed(2);syncEnd();});}
  void freehandPoint(Offset local){if(!drawing||!freehandActive||activePointers!=1)return;final p=mc.camera.screenOffsetToLatLng(local);if(pts.isNotEmpty&&D(pts.last,p)<2)return;add(p);}
  void clearRoute(){setState((){pts.clear();stops.clear();undo.clear();distanceC.clear();routeFinished=false;drawing=false;editingPoints=false;syncEnd();});}
@@ -492,18 +538,19 @@ class _Home extends State<Home>{
    PopupMenuButton<int>(
     tooltip:'Harita türünü seç',
     initialValue:mapMode,
-    onSelected:(mode)=>setState((){mapMode=mode;mapError=false;mapRetry++;}),
+    onSelected:(mode){setState((){mapMode=mode;mapError=false;mapRetry++;if(mode==4)_azureAttribution='© Microsoft Azure Maps';});if(mode==4){_scheduleAzureAttribution();ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Uydu kullanımı ayda 1.000 ücretsiz imagery işlemiyle sınırlı; kota aşımı ücretli olabilir.')));}},
     itemBuilder:(_)=>[
      const PopupMenuItem<int>(value:0,child:Text('Yol haritası')),
      const PopupMenuItem<int>(value:1,child:Text('Uydu • Esri')),
      const PopupMenuItem<int>(value:2,child:Text('Uydu • Sentinel-2 (2025)')),
      if(mapTilerConfigured)const PopupMenuItem<int>(value:3,child:Text('Uydu • MapTiler Free')) else const PopupMenuItem<int>(enabled:false,child:Text('MapTiler için ücretsiz API anahtarı gerekli')),
-     if(googleMapsConfigured)...const [PopupMenuItem<int>(value:4,child:Text('Google • Uydu')),PopupMenuItem<int>(value:5,child:Text('Google • Hibrit'))] else const PopupMenuItem<int>(enabled:false,child:Text('Google için Actions API anahtarı gerekli')),
+     if(azureMapsConfigured)const PopupMenuItem<int>(value:4,child:Text('Uydu • Azure Maps (kotalı)')) else const PopupMenuItem<int>(enabled:false,child:Text('Azure Maps anahtarı gerekli • aylık ücretsiz kota')),
+     if(googleMapsConfigured)...const [PopupMenuItem<int>(value:5,child:Text('Google • Uydu')),PopupMenuItem<int>(value:6,child:Text('Google • Hibrit'))] else const PopupMenuItem<int>(enabled:false,child:Text('Google için Actions API anahtarı gerekli')),
     ],
     child:Padding(padding:const EdgeInsets.symmetric(horizontal:7),child:Row(mainAxisSize:MainAxisSize.min,children:[
      Icon(mapMode==0?Icons.map_outlined:Icons.satellite_alt_outlined,color:const Color(0xFFD5B9FF)),
      const SizedBox(width:3),
-     Text(mapMode==0?'Harita':mapMode==1?'Esri':mapMode==2?'S2':mapMode==3?'M. Uydu':mapMode==4?'G. Uydu':'G. Hibrit',style:const TextStyle(color:Color(0xFFD5B9FF),fontWeight:FontWeight.w600)),
+     Text(mapMode==0?'Harita':mapMode==1?'Esri':mapMode==2?'S2':mapMode==3?'M. Uydu':mapMode==4?'A. Uydu':mapMode==5?'G. Uydu':'G. Hibrit',style:const TextStyle(color:Color(0xFFD5B9FF),fontWeight:FontWeight.w600)),
      const Icon(Icons.arrow_drop_down,color:Color(0xFFD5B9FF)),
     ])),
    ),
@@ -523,7 +570,8 @@ class _Home extends State<Home>{
      backgroundColor:mapBg,
      cameraConstraint:CameraConstraint.contain(bounds:LatLngBounds(const LatLng(-85.05112878,-180),const LatLng(85.05112878,180))),
      interactionOptions:InteractionOptions(flags:(drawing||editingPoints)&&flowStep==0?(InteractiveFlag.pinchMove|InteractiveFlag.pinchZoom):InteractiveFlag.all,enableMultiFingerGestureRace:true),
-     onMapReady:(){if(!_usingGoogleMap)fitRoute();},
+     onMapReady:(){if(!_usingGoogleMap){fitRoute();if(mapMode==4)_scheduleAzureAttribution();}},
+      onPositionChanged:(camera,_) {if(mapMode==4)_scheduleAzureAttribution();},
      onTap:(position,point){if(addingStop)unawaited(selectStopAt(point));},
     ),
     children:showRoute?[
@@ -548,6 +596,13 @@ class _Home extends State<Home>{
       evictErrorTileStrategy:EvictErrorTileStrategy.notVisibleRespectMargin,
       errorTileCallback:(tile,error,stack){if(mounted&&!mapError)setState(()=>mapError=true);},
      ),
+     if(mapMode==4&&azureMapsConfigured)TileLayer(
+      urlTemplate:'https://atlas.microsoft.com/map/tile?api-version=2024-04-01&tilesetId=microsoft.imagery&zoom={z}&x={x}&y={y}&tileSize=256&subscription-key=${Uri.encodeComponent(azureMapsSubscriptionKey)}',
+      userAgentPackageName:'com.rotasim.rotasim',
+      maxNativeZoom:19,
+      evictErrorTileStrategy:EvictErrorTileStrategy.notVisibleRespectMargin,
+      errorTileCallback:(tile,error,stack){if(mounted&&!mapError)setState(()=>mapError=true);},
+     ),
      if(pts.isNotEmpty)PolylineLayer(polylines:[Polyline(points:pts,strokeWidth:9,color:const Color(0x558B3DFF)),Polyline(points:pts,strokeWidth:4,color:purple)]),
      MarkerLayer(markers:[
       if(me!=null)Marker(point:me!,width:38,height:38,child:const Icon(Icons.my_location,color:Colors.blueAccent)),
@@ -565,7 +620,7 @@ class _Home extends State<Home>{
    gmaps.GoogleMap(
     key:ValueKey('rotasim-google-$flowStep-$mapRetry'),
     initialCameraPosition:_initialGoogleCamera(),
-    mapType:mapMode==4?gmaps.MapType.satellite:gmaps.MapType.hybrid,
+    mapType:mapMode==5?gmaps.MapType.satellite:gmaps.MapType.hybrid,
     compassEnabled:false,
     mapToolbarEnabled:false,
     zoomControlsEnabled:false,
@@ -622,15 +677,15 @@ class _Home extends State<Home>{
       child:SafeArea(child:Padding(
        padding:const EdgeInsets.only(top:64),
        child:InkWell(
-        onTap:mapMode==2?openSentinelSource:mapMode==3?openMapTilerAttribution:null,
+        onTap:mapMode==2?openSentinelSource:mapMode==3?openMapTilerAttribution:mapMode==4?()=>ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(_azureAttribution))):null,
         borderRadius:BorderRadius.circular(6),
         child:DecoratedBox(
          decoration:BoxDecoration(color:bg.withValues(alpha:.58),borderRadius:BorderRadius.circular(6)),
          child:Padding(
           padding:const EdgeInsets.symmetric(horizontal:6,vertical:3),
           child:Text(
-           mapMode==0?'© OpenMapTiles • © OpenStreetMap contributors':mapMode==1?'© Esri World Imagery':mapMode==2?'© EOxCloudless • Copernicus Sentinel-2 (2025) ↗':mapMode==3?'MapTiler • Uydu görüntüsü ↗':'© Google Maps',
-           maxLines:1,overflow:TextOverflow.ellipsis,
+           mapMode==0?'© OpenMapTiles • © OpenStreetMap contributors':mapMode==1?'© Esri World Imagery':mapMode==2?'© EOxCloudless • Copernicus Sentinel-2 (2025) ↗':mapMode==3?'MapTiler • Uydu görüntüsü ↗':mapMode==4?_azureAttribution:'© Google Maps',
+           maxLines:mapMode==4?2:1,overflow:TextOverflow.ellipsis,
            style:const TextStyle(fontSize:9,color:Colors.white70),
           ),
          ),
@@ -651,7 +706,7 @@ class _Home extends State<Home>{
       IconButton.filledTonal(tooltip:'Temizle',onPressed:clearRoute,icon:const Icon(Icons.delete_outline)),
      ])))),
      if(addingStop)Positioned(left:16,right:16,top:0,child:SafeArea(child:Container(margin:const EdgeInsets.only(top:68),padding:const EdgeInsets.symmetric(horizontal:14,vertical:10),decoration:BoxDecoration(color:bg.withValues(alpha:.92),borderRadius:BorderRadius.circular(12)),child:const Text('Durak eklemek için çizilen rotanın üzerindeki noktaya dokunun.',textAlign:TextAlign.center,style:TextStyle(fontSize:13))))),
-     if(mapError)Positioned(left:20,right:20,top:0,child:SafeArea(child:Container(margin:const EdgeInsets.only(top:72),padding:const EdgeInsets.symmetric(horizontal:14,vertical:10),decoration:BoxDecoration(color:bg.withValues(alpha:.94),borderRadius:BorderRadius.circular(14),border:Border.all(color:Colors.white12)),child:Row(children:[Expanded(child:Text(mapMode==3?'Uydu haritası yüklenemedi. İnternet bağlantısını, API anahtarını ve ücretsiz aylık kotayı kontrol edip yeniden deneyin.':'Harita yüklenemedi. İnternet bağlantınızı kontrol edip yeniden deneyin.',style:const TextStyle(fontSize:13))),TextButton(onPressed:retryMap,child:const Text('YENİDEN DENE'))])))),
+     if(mapError)Positioned(left:20,right:20,top:0,child:SafeArea(child:Container(margin:const EdgeInsets.only(top:72),padding:const EdgeInsets.symmetric(horizontal:14,vertical:10),decoration:BoxDecoration(color:bg.withValues(alpha:.94),borderRadius:BorderRadius.circular(14),border:Border.all(color:Colors.white12)),child:Row(children:[Expanded(child:Text((mapMode==3||mapMode==4)?'Uydu haritası yüklenemedi. İnternet bağlantısını, API anahtarını ve ücretsiz aylık kotayı kontrol edin.':'Harita yüklenemedi. İnternet bağlantınızı kontrol edip yeniden deneyin.',style:const TextStyle(fontSize:13))),TextButton(onPressed:retryMap,child:const Text('YENİDEN DENE'))])))),
      Positioned(left:16,right:16,bottom:0,child:SafeArea(top:false,child:Padding(padding:const EdgeInsets.only(bottom:12),child:Column(mainAxisSize:MainAxisSize.min,children:[
       if(pts.isNotEmpty&&!addingStop)Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),decoration:BoxDecoration(color:bg.withValues(alpha:.93),borderRadius:BorderRadius.circular(12)),child:Column(mainAxisSize:MainAxisSize.min,children:[Row(children:[const Icon(Icons.alt_route,color:purple),const SizedBox(width:6),Text('${actualKm.toStringAsFixed(2)} km'),const Spacer(),if(!drawing)IconButton(tooltip:editingPoints?'Düzenlemeyi bitir':'Rotayı düzenle',onPressed:()=>setState(()=>editingPoints=!editingPoints),icon:Icon(editingPoints?Icons.done:Icons.edit_location_alt_outlined)),if(!drawing)TextButton(onPressed:()=>setState((){drawing=true;editingPoints=false;routeFinished=false;}),child:Text(routeFinished?'ÇİZİMLE DÜZENLE':'DEVAM ET'))]),if(editingPoints)Row(children:[Expanded(child:ChoiceChip(label:const Text('BÖLÜMÜ DÜZENLE',style:TextStyle(fontSize:10)),selected:!moveWholeRoute,onSelected:(_)=>setState(()=>moveWholeRoute=false))),const SizedBox(width:8),Expanded(child:ChoiceChip(label:const Text('TÜM ROTAYI TAŞI',style:TextStyle(fontSize:10)),selected:moveWholeRoute,onSelected:(_)=>setState(()=>moveWholeRoute=true)))])])),
       if(addingStop)Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.symmetric(horizontal:12,vertical:8),decoration:BoxDecoration(color:bg.withValues(alpha:.91),borderRadius:BorderRadius.circular(12)),child:const Text('Durak yerini seçin',textAlign:TextAlign.center)),
