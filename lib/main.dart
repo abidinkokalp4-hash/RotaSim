@@ -232,7 +232,7 @@ class _Home extends State<Home>{
    onPointerMove:(e){if(activePointers==1)freehandPoint(e.localPosition);},
    onPointerUp:(_){activePointers=(activePointers-1).clamp(0,10);freehandActive=false;},
    onPointerCancel:(_){activePointers=(activePointers-1).clamp(0,10);freehandActive=false;},
-   child:SizedBox.expand(child:FlutterMap(
+   child:FlutterMap(
     key:ValueKey('rotasim-map-retry-$mapRetry'),
     mapController:mc,
     options:MapOptions(
@@ -264,7 +264,7 @@ class _Home extends State<Home>{
       if(playing&&pts.isNotEmpty)Marker(point:pts[playIndex.clamp(0,pts.length-1).toInt()],width:38,height:38,child:const Icon(Icons.directions_walk,color:Colors.white,size:34)),
      ]),
     ],
-   )),
+   ),
   );
   if(flowStep==0){
    return Scaffold(
@@ -303,12 +303,12 @@ class _Home extends State<Home>{
    return Scaffold(backgroundColor:bg,body:SafeArea(child:Column(children:[
     topBar(title:'Rota Bilgileri',backBtn:true),stepper(),
     Expanded(child:ListView(padding:const EdgeInsets.symmetric(horizontal:14),children:[
-     Container(padding:const EdgeInsets.all(12),decoration:BoxDecoration(color:card,borderRadius:BorderRadius.circular(10)),child:Text('${actualKm.toStringAsFixed(2)} km\nHaritadan ölçülen mesafe',style:const TextStyle(fontSize:16,fontWeight:FontWeight.bold))),const SizedBox(height:10),
+     Container(padding:const EdgeInsets.all(12),decoration:BoxDecoration(color:card,borderRadius:BorderRadius.circular(10)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('${actualKm.toStringAsFixed(2)} km\nHaritadan ölçülen mesafe',style:const TextStyle(fontSize:16,fontWeight:FontWeight.bold)),const SizedBox(height:8),Row(children:[Text('${stops.length} durak • ${durationText(Duration(seconds:stopSec))}'),const Spacer(),OutlinedButton.icon(onPressed:pts.length<2?null:(){setState((){addingStop=true;drawing=false;flowStep=0;});},icon:const Icon(Icons.add),label:const Text('DURAK EKLE'))])])),const SizedBox(height:10),
      _section('BAŞLANGIÇ',[ListTile(title:const Text('Başlangıç tarihi / saati'),subtitle:Text(DateFormat('dd.MM.yyyy • HH:mm:ss').format(start)),trailing:const Icon(Icons.calendar_month),onTap:()=>pick(true))]),const SizedBox(height:8),
      _section('MESAFE',[TextField(controller:distanceC,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(suffixText:'km',hintText:'Haritadan ölçülen mesafe'),onChanged:(_)=>setState(syncEnd))]),const SizedBox(height:8),
      _section('ORTALAMA HIZ',[TextField(controller:speedC,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(suffixText:'km/sa'),onChanged:(_)=>setState(syncEnd))]),const SizedBox(height:8),
      _section('SÜRELER',[ListTile(title:const Text('Tahmini hareket süresi'),subtitle:Text(durationText(estimatedMove))),ListTile(title:const Text('Toplam bekleme'),subtitle:Text(durationText(Duration(seconds:stopSec)))),ListTile(title:const Text('Toplam rota süresi'),subtitle:Text(durationText(estimatedTotal)))]),const SizedBox(height:8),
-     _section('DURAKLAR',[Row(children:[Text('${stops.length} durak • ${durationText(Duration(seconds:stopSec))}'),const Spacer(),OutlinedButton.icon(onPressed:pts.length<3?null:(){setState((){addingStop=true;drawing=false;flowStep=0;});},icon:const Icon(Icons.add),label:const Text('Haritadan ekle'))]),for(var i=0;i<stops.length;i++)ListTile(title:Text('Durak ${i+1}'),subtitle:Text('Bekleme: ${durationText(Duration(seconds:stops[i].sec))}'),trailing:IconButton(tooltip:'Bekleme süresini düzenle',onPressed:()=>stopAt(stops[i].index),icon:const Icon(Icons.edit)))]),const SizedBox(height:8),
+     _section('DURAKLAR',[Row(children:[Text('${stops.length} durak • ${durationText(Duration(seconds:stopSec))}'),const Spacer(),OutlinedButton.icon(onPressed:pts.length<2?null:(){setState((){addingStop=true;drawing=false;flowStep=0;});},icon:const Icon(Icons.add),label:const Text('Haritadan ekle'))]),for(var i=0;i<stops.length;i++)ListTile(title:Text('Durak ${i+1}'),subtitle:Text('Bekleme: ${durationText(Duration(seconds:stops[i].sec))}'),trailing:IconButton(tooltip:'Bekleme süresini düzenle',onPressed:()=>stopAt(stops[i].index),icon:const Icon(Icons.edit)))]),const SizedBox(height:8),
      _section('TAHMİNİ BİTİŞ',[SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('Bitiş zamanını otomatik hesapla'),value:autoEnd,onChanged:(v)=>setState((){autoEnd=v;if(v)syncEnd();})),ListTile(title:Text(autoEnd?'Tahmini bitiş':'Elle seçilen bitiş'),subtitle:Text(DateFormat('dd.MM.yyyy • HH:mm:ss').format(autoEnd?estimatedEnd:end)),trailing:IconButton(onPressed:autoEnd?null:()=>pick(false),icon:const Icon(Icons.edit))) ,Text('Başlangıç + hareket + bekleme = bitiş',style:TextStyle(color:Colors.white.withValues(alpha:.62),fontSize:12))]),const SizedBox(height:20),
     ])),
     Padding(padding:const EdgeInsets.all(14),child:Row(children:[navButton('GERİ',()=>setState(()=>flowStep=0),primary:false),const SizedBox(width:10),navButton('SONRAKİ',nextToPreview)])),
@@ -317,29 +317,28 @@ class _Home extends State<Home>{
   if(flowStep==2){
    return Scaffold(backgroundColor:bg,body:SafeArea(child:Column(children:[
     topBar(title:'Rotayı Önizle',backBtn:true),stepper(),
-    Expanded(child:Padding(padding:const EdgeInsets.fromLTRB(14,0,14,8),child:Column(children:[
-     Expanded(child:ClipRRect(borderRadius:BorderRadius.circular(14),child:mapWidget())),const SizedBox(height:8),summary(),const SizedBox(height:8),
+    Expanded(child:LayoutBuilder(builder:(context,box){final mapHeight=(box.maxHeight*.36).clamp(160.0,340.0).toDouble();return Padding(padding:const EdgeInsets.fromLTRB(14,0,14,8),child:Column(children:[
+     SizedBox(width:double.infinity,height:mapHeight,child:ClipRRect(borderRadius:BorderRadius.circular(14),child:Stack(fit:StackFit.expand,children:[mapWidget(),if(mapError)Align(alignment:Alignment.bottomCenter,child:Container(margin:const EdgeInsets.all(8),padding:const EdgeInsets.symmetric(horizontal:10,vertical:4),decoration:BoxDecoration(color:bg.withValues(alpha:.94),borderRadius:BorderRadius.circular(10)),child:Row(mainAxisSize:MainAxisSize.min,children:[const Flexible(child:Text('Harita yüklenemedi',maxLines:1,overflow:TextOverflow.ellipsis)),TextButton(onPressed:retryMap,child:const Text('YENİDEN DENE'))])))]))),const SizedBox(height:8),summary(),const SizedBox(height:8),
      Container(padding:const EdgeInsets.symmetric(horizontal:12,vertical:9),decoration:BoxDecoration(color:card,borderRadius:BorderRadius.circular(12)),child:Row(children:[Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('BAŞLANGIÇ',style:TextStyle(fontSize:9,color:Colors.white54)),Text(DateFormat('dd.MM.yyyy • HH:mm:ss').format(start),style:const TextStyle(fontSize:12,fontWeight:FontWeight.w600))])),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('BİTİŞ',style:TextStyle(fontSize:9,color:Colors.white54)),Text(DateFormat('dd.MM.yyyy • HH:mm:ss').format(autoEnd?estimatedEnd:end),style:const TextStyle(fontSize:12,fontWeight:FontWeight.w600))]))])),const SizedBox(height:8),
      SizedBox(width:double.infinity,height:46,child:FilledButton.icon(onPressed:animate,style:FilledButton.styleFrom(backgroundColor:purple),icon:const Icon(Icons.play_arrow),label:const Text('ROTAYI ÖNİZLE'))),
-     if(mapError)TextButton.icon(onPressed:retryMap,icon:const Icon(Icons.refresh),label:const Text('Haritayı yeniden yükle')),
-    ]))),
+    ]));})),
     Padding(padding:const EdgeInsets.fromLTRB(14,4,14,14),child:Row(children:[navButton('DÜZENLE',()=>setState(()=>flowStep=1),primary:false,icon:Icons.arrow_back),const SizedBox(width:10),navButton('DEVAM ET',()=>setState(()=>flowStep=3))])),
    ])));
   }
   return Scaffold(backgroundColor:bg,body:SafeArea(child:Column(children:[
    topBar(title:'Kaydet / Paylaş',backBtn:true),stepper(),
-   Expanded(child:ListView(padding:const EdgeInsets.all(14),children:[
-    SizedBox(height:220,child:ClipRRect(borderRadius:BorderRadius.circular(14),child:mapWidget())),
-    if(mapError)Align(alignment:Alignment.centerLeft,child:TextButton.icon(onPressed:retryMap,icon:const Icon(Icons.refresh),label:const Text('Harita yüklenemedi · Yeniden dene'))),
-    const SizedBox(height:10),summary(),const SizedBox(height:10),
-    Container(padding:const EdgeInsets.all(14),decoration:BoxDecoration(color:card,borderRadius:BorderRadius.circular(12)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-     Text(routeLabel,style:const TextStyle(fontWeight:FontWeight.bold,fontSize:16)),const SizedBox(height:8),
-     Text('Başlangıç: ${DateFormat('HH:mm:ss').format(start)}'),Text('Bitiş: ${DateFormat('HH:mm:ss').format(autoEnd?estimatedEnd:end)}'),Text('Mesafe: ${effectiveKm.toStringAsFixed(2)} km'),Text('Ortalama hız: ${manualSpeed.toStringAsFixed(1)} km/sa'),Text('Hareket: ${durationText(estimatedMove)}'),Text('Durak sayısı: ${stops.length}'),Text('Bekleme: ${durationText(Duration(seconds:stopSec))}'),Text('Toplam süre: ${durationText(estimatedTotal)}'),
-    ])),const SizedBox(height:14),
-    SizedBox(height:52,child:FilledButton.icon(onPressed:save,style:FilledButton.styleFrom(backgroundColor:purple),icon:const Icon(Icons.save_outlined),label:const Text('ROTAYI KAYDET'))),const SizedBox(height:10),
-    SizedBox(height:52,child:FilledButton.icon(onPressed:()=>shareType('gpx-track'),style:FilledButton.styleFrom(backgroundColor:const Color(0xFF5530A8)),icon:const Icon(Icons.share),label:const Text('GPX TRACK PAYLAŞ'))),
-    Center(child:TextButton(onPressed:(){clearRoute();setState(()=>flowStep=0);},child:const Text('Yeni Rota Oluştur'))),
-   ])),
+   Expanded(child:LayoutBuilder(builder:(context,box){final mapHeight=(box.maxHeight*.25).clamp(130.0,210.0).toDouble();return Padding(padding:const EdgeInsets.fromLTRB(14,0,14,10),child:Column(children:[
+    SizedBox(width:double.infinity,height:mapHeight,child:ClipRRect(borderRadius:BorderRadius.circular(14),child:Stack(fit:StackFit.expand,children:[mapWidget(),if(mapError)Align(alignment:Alignment.bottomCenter,child:Container(margin:const EdgeInsets.all(8),padding:const EdgeInsets.symmetric(horizontal:10,vertical:4),decoration:BoxDecoration(color:bg.withValues(alpha:.94),borderRadius:BorderRadius.circular(10)),child:Row(mainAxisSize:MainAxisSize.min,children:[const Flexible(child:Text('Harita yüklenemedi',maxLines:1,overflow:TextOverflow.ellipsis)),TextButton(onPressed:retryMap,child:const Text('YENİDEN DENE'))])))]))),
+    Expanded(child:ListView(padding:const EdgeInsets.only(top:10,bottom:10),children:[
+     summary(),const SizedBox(height:10),
+     Container(padding:const EdgeInsets.all(14),decoration:BoxDecoration(color:card,borderRadius:BorderRadius.circular(12)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      Text(routeLabel,style:const TextStyle(fontWeight:FontWeight.bold,fontSize:16)),const SizedBox(height:8),
+      Text('Başlangıç: ${DateFormat('HH:mm:ss').format(start)}'),Text('Bitiş: ${DateFormat('HH:mm:ss').format(autoEnd?estimatedEnd:end)}'),Text('Mesafe: ${effectiveKm.toStringAsFixed(2)} km'),Text('Ortalama hız: ${manualSpeed.toStringAsFixed(1)} km/sa'),Text('Hareket: ${durationText(estimatedMove)}'),Text('Durak sayısı: ${stops.length}'),Text('Bekleme: ${durationText(Duration(seconds:stopSec))}'),Text('Toplam süre: ${durationText(estimatedTotal)}'),
+     ])),Center(child:TextButton(onPressed:(){clearRoute();setState(()=>flowStep=0);},child:const Text('Yeni Rota Oluştur'))),
+    ])),
+    SizedBox(width:double.infinity,height:50,child:FilledButton.icon(onPressed:save,style:FilledButton.styleFrom(backgroundColor:purple),icon:const Icon(Icons.save_outlined),label:const Text('ROTAYI KAYDET'))),const SizedBox(height:8),
+    SizedBox(width:double.infinity,height:50,child:FilledButton.icon(onPressed:()=>shareType('gpx-track'),style:FilledButton.styleFrom(backgroundColor:const Color(0xFF5530A8)),icon:const Icon(Icons.share),label:const Text('GPX TRACK PAYLAŞ'))),
+   ]));})),
   ])));
  }
  Widget _section(String title,List<Widget> children)=>Container(padding:const EdgeInsets.all(12),decoration:BoxDecoration(color:const Color(0xFF141A23),borderRadius:BorderRadius.circular(10),border:Border.all(color:Colors.white10)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(title,style:const TextStyle(fontSize:12,fontWeight:FontWeight.bold,color:Colors.white70)),const SizedBox(height:6),...children]));
