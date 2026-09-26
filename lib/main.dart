@@ -28,7 +28,19 @@ class _Home extends State<Home>{
  void add(LatLng p){if(!drawing)return;setState((){pts.add(p);undo.clear();distanceC.text=actualKm.toStringAsFixed(2);});}
  void back(){if(pts.isEmpty)return;setState((){undo.add(pts.removeLast());stops.removeWhere((s)=>s.index>=pts.length);distanceC.text=actualKm.toStringAsFixed(2);});}
  void forward(){if(undo.isEmpty)return;setState((){pts.add(undo.removeLast());distanceC.text=actualKm.toStringAsFixed(2);});}
- Future<void> locate()async{var p=await Geolocator.checkPermission();if(p==LocationPermission.denied)p=await Geolocator.requestPermission();if(p==LocationPermission.denied||p==LocationPermission.deniedForever)return;final x=await Geolocator.getCurrentPosition();setState(()=>me=LatLng(x.latitude,x.longitude));mc.move(me!,16);}
+ Future<void> locate()async{
+  if(!await Geolocator.isLocationServiceEnabled()){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Telefon konum servisini açın.')));return;}
+  var p=await Geolocator.checkPermission();
+  if(p==LocationPermission.denied)p=await Geolocator.requestPermission();
+  if(p==LocationPermission.denied||p==LocationPermission.deniedForever){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Konum izni gerekli. Android izin ekranında Kesin konumu etkinleştirin.')));return;}
+  try{
+    final x=await Geolocator.getCurrentPosition(locationSettings:const LocationSettings(accuracy:LocationAccuracy.bestForNavigation,timeLimit:Duration(seconds:20)));
+    if(!mounted)return;
+    setState(()=>me=LatLng(x.latitude,x.longitude));
+    mc.move(me!,18);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Konum doğruluğu: yaklaşık ±${x.accuracy.toStringAsFixed(0)} m')));
+  }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Kesin konum alınamadı. GPS açık ve Kesin konum izni etkin olmalı.')));}
+}
  Future<void> pick(bool a)async{final b=a?start:end;final d=await showDatePicker(context:context,initialDate:b,firstDate:DateTime(2020),lastDate:DateTime(2035));if(d==null||!mounted)return;final t=await showTimePicker(context:context,initialTime:TimeOfDay.fromDateTime(b));if(t==null)return;setState((){final v=DateTime(d.year,d.month,d.day,t.hour,t.minute);if(a)start=v;else end=v;});}
  Future<void> stopAt(int i)async{final c=TextEditingController(text:'5');final v=await showDialog<int>(context:context,builder:(x)=>AlertDialog(title:Text('Durak ${i+1}'),content:TextField(controller:c,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Bekleme süresi (dakika)')),actions:[TextButton(onPressed:()=>Navigator.pop(x),child:const Text('İptal')),FilledButton(onPressed:()=>Navigator.pop(x,(int.tryParse(c.text)??0)*60),child:const Text('Ekle'))]));if(v!=null&&v>0)setState(()=>stops.add(Stop(i,v)));}
  void animate(){timer?.cancel();if(pts.isEmpty)return;setState((){playing=true;playIndex=0;});timer=Timer.periodic(const Duration(milliseconds:450),(t){if(playIndex>=pts.length-1){t.cancel();setState(()=>playing=false);}else setState(()=>playIndex++);});}
