@@ -141,4 +141,3 @@ class _Home extends State<Home>{
  }
  Widget _section(String title,List<Widget> children)=>Container(padding:const EdgeInsets.all(12),decoration:BoxDecoration(color:const Color(0xFF141A23),borderRadius:BorderRadius.circular(10),border:Border.all(color:Colors.white10)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(title,style:const TextStyle(fontSize:12,fontWeight:FontWeight.bold,color:Colors.white70)),const SizedBox(height:6),...children]));
 }
-}
