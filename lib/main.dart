@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' show Point;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_maplibre/flutter_map_maplibre.dart';
@@ -37,7 +36,7 @@ class _Home extends State<Home>{
 
  @override void dispose(){timer?.cancel();speedC.dispose();distanceC.dispose();super.dispose();}
  void add(LatLng p){if(!drawing||routeFinished)return;setState((){pts.add(p);undo.clear();if(smooth&&pts.length>2){final a=pts[pts.length-3],b=pts[pts.length-2],d=pts.last;pts[pts.length-2]=LatLng((a.latitude+b.latitude*2+d.latitude)/4,(a.longitude+b.longitude*2+d.longitude)/4);}distanceC.text=actualKm.toStringAsFixed(2);syncEnd();});}
- void freehandPoint(Offset local){if(!drawing||!freehandActive)return;final p=mc.camera.pointToLatLng(Point(local.dx,local.dy));if(pts.isNotEmpty&&D(pts.last,p)<2)return;add(p);}
+ void freehandPoint(Offset local){if(!drawing||!freehandActive)return;final p=mc.camera.screenOffsetToLatLng(local);if(pts.isNotEmpty&&D(pts.last,p)<2)return;add(p);}
  void clearRoute(){setState((){pts.clear();stops.clear();undo.clear();distanceC.clear();routeFinished=false;drawing=true;syncEnd();});}
  void finishHere(){if(pts.length<2)return;setState((){routeFinished=true;drawing=false;freehandActive=false;syncEnd();});}
  void closeAndFinish(){if(pts.length<3)return;setState((){if(D(pts.last,pts.first)>0.5)pts.add(pts.first);distanceC.text=actualKm.toStringAsFixed(2);routeFinished=true;drawing=false;freehandActive=false;syncEnd();});}
