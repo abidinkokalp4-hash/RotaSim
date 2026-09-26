@@ -491,7 +491,7 @@ class _Home extends State<Home>{
       errorTileCallback:(tile,error,stack){if(mounted&&!mapError)setState(()=>mapError=true);},
      ),
      if(mapMode==2)TileLayer(
-      urlTemplate:'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/g/{z}/{x}/{y}.jpg',
+      urlTemplate:'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/g/{z}/{y}/{x}.jpg',
       userAgentPackageName:'com.rotasim.rotasim',
       maxNativeZoom:14,
       evictErrorTileStrategy:EvictErrorTileStrategy.notVisibleRespectMargin,
