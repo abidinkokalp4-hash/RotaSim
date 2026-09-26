@@ -119,10 +119,11 @@ class _Home extends State<Home>{
  }
  Future<void> importTrack()async{
   try{
-   final result=await FilePicker.pickFiles(type:FileType.custom,allowedExtensions:const ['gpx','kml','geojson','csv','json','rotasim'],allowMultiple:false,withData:true);
-   if(result==null||result.files.isEmpty)return;
+   final file=await FilePicker.pickFile(type:FileType.custom,allowedExtensions:const ['gpx','kml','geojson','csv','json','rotasim']);
+   if(file==null)return;
    if(!mounted)return;
-   final file=result.files.single;final bytes=file.bytes??(file.path==null?throw const FormatException('Dosya okunamadı.'):await File(file.path!).readAsBytes());
+   final bytes=await file.readAsBytes();
+   if(!mounted)return;
    final imported=parseTrackFile(file.name,utf8.decode(bytes,allowMalformed:false));
    if(imported.length<2)throw const FormatException('Dosyada en az iki geçerli rota noktası bulunamadı.');
    if(pts.isNotEmpty){if(!mounted)return;final replace=await showDialog<bool>(context:context,builder:(dialog)=>AlertDialog(title:const Text('Açık rotayı değiştir?'),content:const Text('İçe aktarılan rota ekranda açılacak. Kayıtlı rotalar ve seçtiğiniz kaynak dosya değiştirilmez.'),actions:[TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('VAZGEÇ')),FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('ROTAYI AÇ'))]));if(!mounted||replace!=true)return;}
