@@ -296,7 +296,7 @@ class _Home extends State<Home>{
        child:Text(addingStop?'VAZGEÇ':pts.length>=2?(drawing?'BİTİR VE DEVAM ET':'SONRAKİ  →'):(pts.isEmpty?'ROTA ÇİZMEYE BAŞLA':'ÇİZİME DEVAM ET'),style:const TextStyle(fontWeight:FontWeight.bold,letterSpacing:.3)),
       )),
      ])))),
-    ]))),
+    ])),
    );
   }
   if(flowStep==1){
