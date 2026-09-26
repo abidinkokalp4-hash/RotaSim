@@ -16,7 +16,7 @@ class Stop{final int index;final int sec;Stop(this.index,this.sec);Map<String,dy
 class Home extends StatefulWidget{const Home({super.key});@override State<Home> createState()=>_Home();}
 class _Home extends State<Home>{
  final mc=MapController(); final pts=<LatLng>[]; final stops=<Stop>[]; final undo=<LatLng>[]; final D=const Distance();
- bool sat=false,drawing=true,playing=false; LatLng? me; int playIndex=0; Timer? timer;
+ bool sat=false,drawing=true,playing=false,smooth=true; LatLng? me; int playIndex=0; Timer? timer;
  DateTime start=DateTime.now(),end=DateTime.now().add(const Duration(hours:1));
  final speedC=TextEditingController(text:'5.0'),distanceC=TextEditingController(),nameC=TextEditingController(text:'Yeni Rota');
  double get actualKm{double m=0;for(int i=1;i<pts.length;i++)m+=D(pts[i-1],pts[i]);return m/1000;}
@@ -31,7 +31,8 @@ class _Home extends State<Home>{
  String get tile=>sat?'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}':'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 
  @override void dispose(){timer?.cancel();speedC.dispose();distanceC.dispose();nameC.dispose();super.dispose();}
- void add(LatLng p){if(!drawing)return;setState((){pts.add(p);undo.clear();distanceC.text=actualKm.toStringAsFixed(2);});}
+ void add(LatLng p){if(!drawing)return;setState((){pts.add(p);undo.clear();if(smooth&&pts.length>2){final a=pts[pts.length-3],b=pts[pts.length-2],d=pts.last;pts[pts.length-2]=LatLng((a.latitude+b.latitude*2+d.latitude)/4,(a.longitude+b.longitude*2+d.longitude)/4);}distanceC.text=actualKm.toStringAsFixed(2);});}
+ void clearRoute(){setState((){pts.clear();stops.clear();undo.clear();distanceC.clear();});}
  void back(){if(pts.isEmpty)return;setState((){undo.add(pts.removeLast());stops.removeWhere((s)=>s.index>=pts.length);distanceC.text=actualKm.toStringAsFixed(2);});}
  void forward(){if(undo.isEmpty)return;setState((){pts.add(undo.removeLast());distanceC.text=actualKm.toStringAsFixed(2);});}
  Future<void> locate()async{
@@ -48,7 +49,15 @@ class _Home extends State<Home>{
   }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Kesin konum alınamadı. GPS açık ve Kesin konum izni etkin olmalı.')));}
 }
  Future<void> pick(bool a)async{final b=a?start:end;final d=await showDatePicker(context:context,initialDate:b,firstDate:DateTime(2020),lastDate:DateTime(2035));if(d==null||!mounted)return;final t=await showTimePicker(context:context,initialTime:TimeOfDay.fromDateTime(b));if(t==null)return;setState((){final v=DateTime(d.year,d.month,d.day,t.hour,t.minute);if(a)start=v;else end=v;});}
- Future<void> stopAt(int i)async{final c=TextEditingController(text:'5');final v=await showDialog<int>(context:context,builder:(x)=>AlertDialog(title:Text('Durak ${i+1}'),content:TextField(controller:c,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Bekleme süresi (dakika)')),actions:[TextButton(onPressed:()=>Navigator.pop(x),child:const Text('İptal')),FilledButton(onPressed:()=>Navigator.pop(x,(int.tryParse(c.text)??0)*60),child:const Text('Ekle'))]));if(v!=null&&v>0)setState(()=>stops.add(Stop(i,v)));}
+ Future<void> stopAt(int i)async{
+  final old=stops.where((s)=>s.index==i).toList();
+  int sec=old.isEmpty?300:old.first.sec;
+  final h=TextEditingController(text:(sec~/3600).toString());
+  final m=TextEditingController(text:((sec%3600)~/60).toString());
+  final s=TextEditingController(text:(sec%60).toString());
+  final v=await showDialog<int>(context:context,builder:(x)=>AlertDialog(title:Text('Durak ${i+1}'),content:Row(children:[Expanded(child:TextField(controller:h,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Saat'))),const SizedBox(width:6),Expanded(child:TextField(controller:m,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Dakika'))),const SizedBox(width:6),Expanded(child:TextField(controller:s,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Saniye')))]),actions:[if(old.isNotEmpty)TextButton(onPressed:()=>Navigator.pop(x,-1),child:const Text('Durağı sil')),TextButton(onPressed:()=>Navigator.pop(x),child:const Text('İptal')),FilledButton(onPressed:(){final total=(int.tryParse(h.text)??0)*3600+(int.tryParse(m.text)??0)*60+(int.tryParse(s.text)??0);Navigator.pop(x,total);},child:Text(old.isEmpty?'Ekle':'Güncelle'))]));
+  if(v==null)return;setState((){stops.removeWhere((e)=>e.index==i);if(v>0)stops.add(Stop(i,v));});
+}
  void animate(){timer?.cancel();if(pts.isEmpty)return;setState((){playing=true;playIndex=0;});timer=Timer.periodic(const Duration(milliseconds:450),(t){if(playIndex>=pts.length-1){t.cancel();setState(()=>playing=false);}else setState(()=>playIndex++);});}
  String timeFor(int i){if(pts.length<2)return start.toUtc().toIso8601String();double total=0,at=0;for(int k=1;k<pts.length;k++){final q=D(pts[k-1],pts[k]);total+=q;if(k<=i)at+=q;}final move=end.difference(start).inSeconds-stopSec;var sec=(move.clamp(0,999999999)*(total==0?0:at/total)).round();for(final s in stops){if(s.index<=i)sec+=s.sec;}return start.add(Duration(seconds:sec)).toUtc().toIso8601String();}
  String gpx(){final b=StringBuffer('<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="RotaSim V3" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd"><metadata><name>${nameC.text}</name><time>${start.toUtc().toIso8601String()}</time></metadata><trk><name>${nameC.text}</name><type>walking</type><trkseg>\n');for(int i=0;i<pts.length;i++)b.writeln('<trkpt lat="${pts[i].latitude.toStringAsFixed(7)}" lon="${pts[i].longitude.toStringAsFixed(7)}"><time>${timeFor(i)}</time></trkpt>');b.write('</trkseg></trk><rte><name>${nameC.text}</name>');for(final p in pts)b.write('<rtept lat="${p.latitude.toStringAsFixed(7)}" lon="${p.longitude.toStringAsFixed(7)}"/>');b.write('</rte></gpx>');return b.toString();}
@@ -67,13 +76,13 @@ class _Home extends State<Home>{
     if(playing&&pts.isNotEmpty)Marker(point:pts[playIndex],width:48,height:48,child:const Icon(Icons.directions_walk,size:42,color:Colors.white)),
    ])
   ]),
-  SafeArea(child:Padding(padding:const EdgeInsets.all(10),child:Row(children:[FilledButton.tonalIcon(onPressed:()=>setState(()=>sat=!sat),icon:Icon(sat?Icons.map:Icons.satellite_alt),label:Text(sat?'Harita':'Uydu')),const Spacer(),IconButton.filledTonal(onPressed:locate,icon:const Icon(Icons.my_location)),IconButton.filledTonal(onPressed:saved,icon:const Icon(Icons.folder))]))),
+  SafeArea(child:Padding(padding:const EdgeInsets.all(10),child:Row(children:[FilledButton.tonalIcon(onPressed:()=>setState(()=>sat=!sat),icon:Icon(sat?Icons.map:Icons.satellite_alt),label:Text(sat?'Harita':'Uydu')),const SizedBox(width:6),IconButton.filledTonal(tooltip:'Çizim modu',onPressed:()=>setState(()=>drawing=!drawing),icon:Icon(drawing?Icons.edit:Icons.pan_tool)),IconButton.filledTonal(tooltip:'Yumuşatma',onPressed:()=>setState(()=>smooth=!smooth),icon:Icon(smooth?Icons.gesture:Icons.polyline)),const Spacer(),IconButton.filledTonal(onPressed:locate,icon:const Icon(Icons.my_location)),IconButton.filledTonal(onPressed:saved,icon:const Icon(Icons.folder))]))),
   Positioned(left:10,right:10,bottom:10,child:Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(mainAxisSize:MainAxisSize.min,children:[
-   Row(children:[Expanded(child:TextField(controller:nameC,decoration:const InputDecoration(labelText:'Rota adı',isDense:true))),const SizedBox(width:8),IconButton(onPressed:back,icon:const Icon(Icons.undo)),IconButton(onPressed:forward,icon:const Icon(Icons.redo)),IconButton(onPressed:()=>setState((){pts.clear();stops.clear();undo.clear();distanceC.clear();}),icon:const Icon(Icons.delete_outline))]),
+   Row(children:[Expanded(child:TextField(controller:nameC,decoration:const InputDecoration(labelText:'Rota adı',isDense:true))),const SizedBox(width:8),IconButton(onPressed:back,icon:const Icon(Icons.undo)),IconButton(onPressed:forward,icon:const Icon(Icons.redo)),IconButton(onPressed:clearRoute,icon:const Icon(Icons.delete_outline))]),
    const SizedBox(height:6),Row(children:[Expanded(child:TextField(controller:distanceC,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Mesafe km',isDense:true))),const SizedBox(width:8),Expanded(child:TextField(controller:speedC,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Hız km/sa',isDense:true)))]),
    Row(children:[Expanded(child:TextButton(onPressed:()=>pick(true),child:Text('Başlangıç\n${fmt.format(start)}'))),Expanded(child:TextButton(onPressed:()=>pick(false),child:Text('Bitiş\n${fmt.format(end)}')))]),
-   Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[Text('${actualKm.toStringAsFixed(2)} km • ${stops.length} durak'),Wrap(children:[IconButton(onPressed:animate,icon:Icon(playing?Icons.pause:Icons.play_arrow)),IconButton(onPressed:preview,icon:const Icon(Icons.visibility)),IconButton(onPressed:save,icon:const Icon(Icons.save)),PopupMenuButton<String>(onSelected:(v)=>export(v=='gpx'),itemBuilder:(_)=>const [PopupMenuItem(value:'gpx',child:Text('GPX paylaş')),PopupMenuItem(value:'kml',child:Text('KML paylaş'))])])]),
-   const Text('Haritaya dokun: rota ekle • Rota üzerinde uzun bas: durak ekle',style:TextStyle(fontSize:11))
+   Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[Expanded(child:Text('${actualKm.toStringAsFixed(2)} km • ${stops.length} durak\nTahmini ${durationText(estimatedTotal)} • ${DateFormat('HH:mm:ss').format(estimatedEnd)}',style:const TextStyle(fontSize:12))),Wrap(children:[IconButton(onPressed:animate,icon:Icon(playing?Icons.pause:Icons.play_arrow)),IconButton(onPressed:preview,icon:const Icon(Icons.visibility)),IconButton(onPressed:save,icon:const Icon(Icons.save)),PopupMenuButton<String>(onSelected:(v)=>export(v=='gpx'),itemBuilder:(_)=>const [PopupMenuItem(value:'gpx',child:Text('GPX paylaş')),PopupMenuItem(value:'kml',child:Text('KML paylaş'))])])]),
+   Text(drawing?'Çizim açık • Haritada noktaları sık ekleyerek güzergâhı çiz • Uzun bas: durak':'Kaydırma modu • Kalem simgesinden çizimi aç',style:const TextStyle(fontSize:11))
   ]))))
  ]));}
 }
