@@ -10,6 +10,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
@@ -24,7 +25,7 @@ class _Home extends State<Home>{
  final _mapControllers=List<MapController>.generate(4,(_)=>MapController());
  MapController get mc=>_mapControllers[flowStep];
  final pts=<LatLng>[]; final stops=<Stop>[]; final undo=<LatLng>[]; final D=const Distance();
- int mapMode=0; // 0 Yol, 1 Uydu HD (Esri), 2 Güncel Uydu (NASA VIIRS)
+ int mapMode=0; // 0 Yol, 1 Uydu HD (Esri), 2 Sentinel-2 cloudless (EOX, 2025)
  bool drawing=false,playing=false,smooth=true,freehandActive=false,autoEnd=true,routeFinished=false,addingStop=false,mapError=false,editingPoints=false,moveWholeRoute=false; int activePointers=0,flowStep=0,mapRetry=0; LatLng? me; int playIndex=0; Timer? timer;
  final mapGestureKeys=List<GlobalKey>.generate(4,(_)=>GlobalKey());
  _RouteDragKind routeDragKind=_RouteDragKind.none; int routeDragIndex=-1; double routeDragT=0,routeDragCenterDistance=0; LatLng? routeDragAnchor; List<LatLng>? routeDragOriginal; List<double> routeDragDistances=const[];
@@ -44,6 +45,13 @@ class _Home extends State<Home>{
  bool get nearStart=>pts.length>3&&D(pts.first,pts.last)<=25;
 
  void retryMap(){setState((){mapError=false;mapRetry++;});}
+ Future<void> openSentinelSource()async{
+  try{
+   final opened=await launchUrl(Uri.parse('https://maps.eox.at/'),mode:LaunchMode.externalApplication);
+   if(!opened&&mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('EOX kaynak sayfası açılamadı.')));
+  }catch(_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('EOX kaynak sayfası açılamadı.')));}
+ }
+
  Future<void> selectStopAt(LatLng point)async{
   if(pts.length<2)return;
   final screenPoint=mc.camera.latLngToScreenOffset(point);
@@ -426,7 +434,22 @@ class _Home extends State<Home>{
    if(title!=null)Text(title,style:const TextStyle(fontSize:18,fontWeight:FontWeight.bold))else logo(),
    const Spacer(),
    if(title==null)IconButton(tooltip:'Rota dosyası içe aktar',onPressed:importTrack,icon:const Icon(Icons.file_open_outlined)),
-   TextButton.icon(onPressed:()=>setState((){mapMode=mapMode==0?1:0;mapError=false;mapRetry++;}),icon:Icon(mapMode==0?Icons.satellite_alt_outlined:Icons.map_outlined),label:Text(mapMode==0?'Uydu':'Harita')),
+   PopupMenuButton<int>(
+    tooltip:'Harita türünü seç',
+    initialValue:mapMode,
+    onSelected:(mode)=>setState((){mapMode=mode;mapError=false;mapRetry++;}),
+    itemBuilder:(_)=>const [
+     PopupMenuItem<int>(value:0,child:Text('Yol haritası')),
+     PopupMenuItem<int>(value:1,child:Text('Uydu • Esri')),
+     PopupMenuItem<int>(value:2,child:Text('Uydu • Sentinel-2 (2025)')),
+    ],
+    child:Padding(padding:const EdgeInsets.symmetric(horizontal:7),child:Row(mainAxisSize:MainAxisSize.min,children:[
+     Icon(mapMode==0?Icons.map_outlined:Icons.satellite_alt_outlined,color:const Color(0xFFD5B9FF)),
+     const SizedBox(width:3),
+     Text(mapMode==0?'Harita':mapMode==1?'Esri':'S2',style:const TextStyle(color:Color(0xFFD5B9FF),fontWeight:FontWeight.w600)),
+     const Icon(Icons.arrow_drop_down,color:Color(0xFFD5B9FF)),
+    ])),
+   ),
    IconButton(tooltip:'Kayıtlı Rotalar',onPressed:saved,icon:const Icon(Icons.bookmarks_outlined)),
   ])));
   Widget metric(String value,String label)=>Column(mainAxisAlignment:MainAxisAlignment.center,children:[Text(value,style:const TextStyle(fontWeight:FontWeight.bold,fontSize:14),maxLines:1,overflow:TextOverflow.ellipsis),const SizedBox(height:2),Text(label,style:const TextStyle(fontSize:8,color:Colors.white54),maxLines:1,overflow:TextOverflow.ellipsis)]);
@@ -467,6 +490,13 @@ class _Home extends State<Home>{
       evictErrorTileStrategy:EvictErrorTileStrategy.notVisibleRespectMargin,
       errorTileCallback:(tile,error,stack){if(mounted&&!mapError)setState(()=>mapError=true);},
      ),
+     if(mapMode==2)TileLayer(
+      urlTemplate:'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/g/{z}/{x}/{y}.jpg',
+      userAgentPackageName:'com.rotasim.rotasim',
+      maxNativeZoom:14,
+      evictErrorTileStrategy:EvictErrorTileStrategy.notVisibleRespectMargin,
+      errorTileCallback:(tile,error,stack){if(mounted&&!mapError)setState(()=>mapError=true);},
+     ),
      if(pts.isNotEmpty)PolylineLayer(polylines:[Polyline(points:pts,strokeWidth:9,color:const Color(0x558B3DFF)),Polyline(points:pts,strokeWidth:4,color:purple)]),
      MarkerLayer(markers:[
       if(me!=null)Marker(point:me!,width:38,height:38,child:const Icon(Icons.my_location,color:Colors.blueAccent)),
@@ -487,7 +517,27 @@ class _Home extends State<Home>{
      Positioned.fill(child:RepaintBoundary(child:mapWidget())),
      Positioned(left:0,right:0,top:0,child:topBar()),
      if(editingPoints&&!mapError)Positioned(left:64,right:60,top:0,child:SafeArea(child:Container(margin:const EdgeInsets.only(top:66),padding:const EdgeInsets.symmetric(horizontal:10,vertical:8),decoration:BoxDecoration(color:bg.withValues(alpha:.92),borderRadius:BorderRadius.circular(12)),child:Text(moveWholeRoute?'Haritanın boş bir yerinden sürükleyerek rotanın tamamını taşıyın.':'Mor çizgiye dokunup sürükleyerek o bölümü düzenleyin. Harita için iki parmak kullanın.',textAlign:TextAlign.center,style:const TextStyle(fontSize:12))))),
-     if(!drawing&&!addingStop)Positioned(left:10,top:0,child:SafeArea(child:Padding(padding:const EdgeInsets.only(top:64),child:DecoratedBox(decoration:BoxDecoration(color:bg.withValues(alpha:.58),borderRadius:BorderRadius.circular(6)),child:Padding(padding:const EdgeInsets.symmetric(horizontal:6,vertical:3),child:Text(mapMode==0?'© OpenMapTiles • © OpenStreetMap contributors':'© Esri World Imagery',maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:9,color:Colors.white70))))))),
+     if(!drawing&&!addingStop)Positioned(
+      left:10,top:0,
+      child:SafeArea(child:Padding(
+       padding:const EdgeInsets.only(top:64),
+       child:InkWell(
+        onTap:mapMode==2?openSentinelSource:null,
+        borderRadius:BorderRadius.circular(6),
+        child:DecoratedBox(
+         decoration:BoxDecoration(color:bg.withValues(alpha:.58),borderRadius:BorderRadius.circular(6)),
+         child:Padding(
+          padding:const EdgeInsets.symmetric(horizontal:6,vertical:3),
+          child:Text(
+           mapMode==0?'© OpenMapTiles • © OpenStreetMap contributors':mapMode==1?'© Esri World Imagery':'© EOxCloudless • Copernicus Sentinel-2 (2025) ↗',
+           maxLines:1,overflow:TextOverflow.ellipsis,
+           style:const TextStyle(fontSize:9,color:Colors.white70),
+          ),
+         ),
+        ),
+       ),
+      )),
+     ),
      Positioned(right:10,top:0,child:SafeArea(child:Padding(padding:const EdgeInsets.only(top:68),child:Column(children:[
       IconButton.filledTonal(tooltip:'Konumuma git',onPressed:locate,icon:const Icon(Icons.my_location)),
       IconButton.filledTonal(tooltip:'Yakınlaştır',onPressed:()=>mc.move(mc.camera.center,mc.camera.zoom+1),icon:const Icon(Icons.add)),
