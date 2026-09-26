@@ -33,6 +33,27 @@ jobs:
               s=s.replace(marker,permissions)
           p.write_text(s)
           PY
+      - name: Configure optional Google Maps key
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          if [ -n "$GOOGLE_MAPS_API_KEY" ]; then
+            python3 - <<'PY'
+            import os
+            from pathlib import Path
+            p=Path('android/app/src/main/AndroidManifest.xml')
+            s=p.read_text()
+            key=os.environ.get('GOOGLE_MAPS_API_KEY','')
+            tag=f'''<meta-data android:name="com.google.android.geo.API_KEY" android:value="{key}"/>'''
+            s=s.replace('<application', '<application', 1)
+            pos=s.find('>', s.find('<application'))
+            if key and tag not in s:
+                s=s[:pos+1]+'\n        '+tag+s[pos+1:]
+            p.write_text(s)
+            PY
+          else
+            echo "GOOGLE_MAPS_API_KEY not configured; building with OpenStreetMap/Esri maps."
+          fi
       - name: Get dependencies
         run: flutter pub get
       - name: Build release APK
