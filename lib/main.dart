@@ -14,16 +14,22 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 
 void main()=>runApp(const App());
 class App extends StatelessWidget{const App({super.key});@override Widget build(BuildContext c)=>MaterialApp(debugShowCheckedModeBanner:false,title:'RotaSim V3',theme:ThemeData(colorSchemeSeed:const Color(0xFF8B3DFF),useMaterial3:true,brightness:Brightness.dark),home:const Home());}
 class Stop{final int index;final int sec;Stop(this.index,this.sec);Map<String,dynamic> toJson()=>{'i':index,'s':sec};}
+const bool googleMapsConfigured=bool.fromEnvironment('GOOGLE_MAPS_CONFIGURED',defaultValue:false);
 enum _RouteDragKind{none,point,segment,whole}
 class _RouteHit{const _RouteHit(this.index,this.t,this.point,this.distance);final int index;final double t;final Offset point;final double distance;}
 class Home extends StatefulWidget{const Home({super.key});@override State<Home> createState()=>_Home();}
 class _Home extends State<Home>{
  final _mapControllers=List<MapController>.generate(4,(_)=>MapController());
+ final _googleControllers=List<gmaps.GoogleMapController?>.filled(4,null);
+ final Map<int,Offset> _mapPointers=<int,Offset>{};
+ Offset? _lastMultiPointerCenter;
  MapController get mc=>_mapControllers[flowStep];
+ bool get _usingGoogleMap=>googleMapsConfigured&&mapMode>=3;
  final pts=<LatLng>[]; final stops=<Stop>[]; final undo=<LatLng>[]; final D=const Distance();
  int mapMode=0; // 0 Yol, 1 Uydu HD (Esri), 2 Sentinel-2 cloudless (EOX, 2025)
  bool drawing=false,playing=false,smooth=true,freehandActive=false,autoEnd=true,routeFinished=false,addingStop=false,mapError=false,editingPoints=false,moveWholeRoute=false; int activePointers=0,flowStep=0,mapRetry=0; LatLng? me; int playIndex=0; Timer? timer;
@@ -74,8 +80,51 @@ class _Home extends State<Home>{
   if(pts.length<2||actualKm<0.001)return;
   WidgetsBinding.instance.addPostFrameCallback((_){
    if(!mounted)return;
+   if(_usingGoogleMap){
+    final controller=_googleControllers[flowStep];
+    if(controller==null)return;
+    final lats=pts.map((p)=>p.latitude),lons=pts.map((p)=>p.longitude);
+    var south=lats.reduce((a,b)=>a<b?a:b),north=lats.reduce((a,b)=>a>b?a:b),west=lons.reduce((a,b)=>a<b?a:b),east=lons.reduce((a,b)=>a>b?a:b);
+    if((north-south).abs()<0.0001){south-=0.00005;north+=0.00005;}
+    if((east-west).abs()<0.0001){west-=0.00005;east+=0.00005;}
+    final bounds=gmaps.LatLngBounds(southwest:gmaps.LatLng(south,west),northeast:gmaps.LatLng(north,east));
+    final padding=flowStep==0?64.0:24.0;
+    unawaited(controller.animateCamera(gmaps.CameraUpdate.newLatLngBounds(bounds,padding)));
+    return;
+   }
    try{mc.fitCamera(CameraFit.coordinates(coordinates:List<LatLng>.of(pts),padding:flowStep==0?const EdgeInsets.fromLTRB(40,88,40,160):const EdgeInsets.all(20),maxZoom:17,minZoom:5));}catch(_){}
   });
+ }
+ gmaps.LatLng _toGoogle(LatLng point)=>gmaps.LatLng(point.latitude,point.longitude);
+ List<gmaps.LatLng> _googlePoints()=>pts.map(_toGoogle).toList(growable:false);
+ gmaps.CameraPosition _initialGoogleCamera(){
+  try{final camera=mc.camera;return gmaps.CameraPosition(target:_toGoogle(camera.center),zoom:camera.zoom);}
+  catch(_){final center=pts.isNotEmpty?pts[pts.length~/2]:(me??const LatLng(39.93,32.86));return gmaps.CameraPosition(target:_toGoogle(center),zoom:pts.isNotEmpty?14:(me!=null?16:12));}
+ }
+ void _syncFlutterCamera(gmaps.CameraPosition position){
+  if(!mounted)return;
+  try{
+   final target=LatLng(position.target.latitude,position.target.longitude),camera=mc.camera;
+   if((camera.center.latitude-target.latitude).abs()>0.0000001||(camera.center.longitude-target.longitude).abs()>0.0000001||(camera.zoom-position.zoom).abs()>0.001)mc.move(target,position.zoom);
+  }catch(_){}
+ }
+ Future<void> _moveMapCamera(LatLng target,double zoom)async{
+  if(_usingGoogleMap){
+   final controller=_googleControllers[flowStep];
+   if(controller!=null){await controller.animateCamera(gmaps.CameraUpdate.newCameraPosition(gmaps.CameraPosition(target:_toGoogle(target),zoom:zoom)));return;}
+  }
+  mc.move(target,zoom);
+ }
+ void _panGoogleWithTwoFingers(){
+  if(!_usingGoogleMap||flowStep!=0||(!drawing&&!editingPoints)||_mapPointers.length<2)return;
+  final positions=_mapPointers.values.toList(growable:false);
+  final center=Offset(positions.fold<double>(0,(sum,p)=>sum+p.dx)/positions.length,positions.fold<double>(0,(sum,p)=>sum+p.dy)/positions.length);
+  final previous=_lastMultiPointerCenter;_lastMultiPointerCenter=center;
+  if(previous==null)return;
+  final delta=center-previous;
+  if(delta.distance<0.5)return;
+  final controller=_googleControllers[flowStep];if(controller==null)return;
+  unawaited(controller.moveCamera(gmaps.CameraUpdate.scrollBy(-delta.dx,-delta.dy)));
  }
  void goToStep(int step){
   setState((){flowStep=step;mapRetry++;if(step!=0)addingStop=false;if(step!=0)editingPoints=false;});
@@ -235,7 +284,7 @@ class _Home extends State<Home>{
    }
    if(!mounted)return;
    setState(()=>me=LatLng(best.latitude,best.longitude));
-   mc.move(me!,best.accuracy<=15?18:17);
+   await _moveMapCamera(me!,best.accuracy<=15?18:17);
    final note=accuracyStatus==LocationAccuracyStatus.reduced||best.accuracy>30
     ?'Konum yaklaşık ±${best.accuracy.toStringAsFixed(0)} m doğrulukta. Kesin konum iznini açıp açık alanda yeniden deneyin.'
     :'Konum doğruluğu yaklaşık ±${best.accuracy.toStringAsFixed(0)} m.';
@@ -438,15 +487,16 @@ class _Home extends State<Home>{
     tooltip:'Harita türünü seç',
     initialValue:mapMode,
     onSelected:(mode)=>setState((){mapMode=mode;mapError=false;mapRetry++;}),
-    itemBuilder:(_)=>const [
-     PopupMenuItem<int>(value:0,child:Text('Yol haritası')),
-     PopupMenuItem<int>(value:1,child:Text('Uydu • Esri')),
-     PopupMenuItem<int>(value:2,child:Text('Uydu • Sentinel-2 (2025)')),
+    itemBuilder:(_)=>[
+     const PopupMenuItem<int>(value:0,child:Text('Yol haritası')),
+     const PopupMenuItem<int>(value:1,child:Text('Uydu • Esri')),
+     const PopupMenuItem<int>(value:2,child:Text('Uydu • Sentinel-2 (2025)')),
+     if(googleMapsConfigured)...const [PopupMenuItem<int>(value:3,child:Text('Google • Uydu')),PopupMenuItem<int>(value:4,child:Text('Google • Hibrit'))] else const PopupMenuItem<int>(enabled:false,child:Text('Google için Actions API anahtarı gerekli')),
     ],
     child:Padding(padding:const EdgeInsets.symmetric(horizontal:7),child:Row(mainAxisSize:MainAxisSize.min,children:[
      Icon(mapMode==0?Icons.map_outlined:Icons.satellite_alt_outlined,color:const Color(0xFFD5B9FF)),
      const SizedBox(width:3),
-     Text(mapMode==0?'Harita':mapMode==1?'Esri':'S2',style:const TextStyle(color:Color(0xFFD5B9FF),fontWeight:FontWeight.w600)),
+     Text(mapMode==0?'Harita':mapMode==1?'Esri':mapMode==2?'S2':mapMode==3?'G. Uydu':'G. Hibrit',style:const TextStyle(color:Color(0xFFD5B9FF),fontWeight:FontWeight.w600)),
      const Icon(Icons.arrow_drop_down,color:Color(0xFFD5B9FF)),
     ])),
    ),
@@ -457,19 +507,8 @@ class _Home extends State<Home>{
    crossAxisCount:3,shrinkWrap:true,physics:const NeverScrollableScrollPhysics(),mainAxisSpacing:4,crossAxisSpacing:4,childAspectRatio:2.15,
    children:[metric('${effectiveKm.toStringAsFixed(2)} km','MESAFE'),metric('${manualSpeed.toStringAsFixed(1)} km/sa','ORT. HIZ'),metric(durationText(estimatedMove),'HAREKET'),metric(durationText(Duration(seconds:stopSec)),'BEKLEME'),metric(durationText(estimatedTotal),'TOPLAM'),metric('${stops.length}','DURAK')],
   ));
-  Widget mapWidget()=>Listener(
-   behavior:HitTestBehavior.opaque,
-   onPointerDown:(e){
-    activePointers++;
-    if(activePointers==1&&drawing){freehandActive=true;freehandPoint(e.localPosition);}
-    else if(activePointers==1&&editingPoints&&flowStep==0){freehandActive=false;_beginRouteDrag(e.localPosition);}
-    else{freehandActive=false;if(activePointers>1)_endRouteDrag();}
-   },
-   onPointerMove:(e){if(activePointers!=1)return;if(routeDragKind!=_RouteDragKind.none){_updateRouteDrag(e.localPosition);}else{freehandPoint(e.localPosition);}},
-   onPointerUp:(_){activePointers=(activePointers-1).clamp(0,10);freehandActive=false;if(activePointers==0)_endRouteDrag();},
-   onPointerCancel:(_){activePointers=(activePointers-1).clamp(0,10);freehandActive=false;_endRouteDrag();},
-  child:KeyedSubtree(key:mapGestureKeys[flowStep],child:FlutterMap(
-    key:ValueKey('rotasim-map-$flowStep-$mapRetry'),
+  Widget flutterMapProjection({bool showRoute=true})=>FlutterMap(
+    key:ValueKey('rotasim-map-$flowStep-$mapRetry-${showRoute?'visible':'projection'}'),
     mapController:mc,
     options:MapOptions(
      initialCenter:pts.isNotEmpty?pts[pts.length~/2]:(me??const LatLng(39.93,32.86)),
@@ -477,13 +516,11 @@ class _Home extends State<Home>{
      backgroundColor:mapBg,
      cameraConstraint:CameraConstraint.contain(bounds:LatLngBounds(const LatLng(-85.05112878,-180),const LatLng(85.05112878,180))),
      interactionOptions:InteractionOptions(flags:(drawing||editingPoints)&&flowStep==0?(InteractiveFlag.pinchMove|InteractiveFlag.pinchZoom):InteractiveFlag.all,enableMultiFingerGestureRace:true),
-     onMapReady:fitRoute,
+     onMapReady:(){if(!_usingGoogleMap)fitRoute();},
      onTap:(position,point){if(addingStop)unawaited(selectStopAt(point));},
     ),
-    children:[
-     if(mapMode==0)const MapLibreLayer(
-      initStyle:'https://tiles.openfreemap.org/styles/liberty',
-     ),
+    children:showRoute?[
+     if(mapMode==0)const MapLibreLayer(initStyle:'https://tiles.openfreemap.org/styles/liberty'),
      if(mapMode==1)TileLayer(
       urlTemplate:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       userAgentPackageName:'com.rotasim.rotasim',
@@ -505,10 +542,59 @@ class _Home extends State<Home>{
       for(final st in stops)if(st.index>=0&&st.index<pts.length)Marker(point:pts[st.index],width:34,height:34,child:const Icon(Icons.circle,color:Colors.orangeAccent,size:24)),
       if(editingPoints&&flowStep==0)for(var i=0;i<pts.length;i+=editStride)Marker(point:pts[i],width:26,height:26,child:Center(child:Container(width:14,height:14,decoration:BoxDecoration(color:i==0?Colors.greenAccent:i==pts.length-1?Colors.redAccent:purple,shape:BoxShape.circle,border:Border.all(color:Colors.white,width:2),boxShadow:const [BoxShadow(color:Colors.black54,blurRadius:4)])))),
       if(editingPoints&&flowStep==0&&(pts.length-1)%editStride!=0)Marker(point:pts.last,width:26,height:26,child:Center(child:Container(width:14,height:14,decoration:BoxDecoration(color:Colors.redAccent,shape:BoxShape.circle,border:Border.all(color:Colors.white,width:2),boxShadow:const [BoxShadow(color:Colors.black54,blurRadius:4)])))),
-     if(playing&&pts.isNotEmpty)Marker(point:pts[playIndex.clamp(0,pts.length-1).toInt()],width:38,height:38,child:const Icon(Icons.directions_walk,color:Colors.white,size:34)),
+      if(playing&&pts.isNotEmpty)Marker(point:pts[playIndex.clamp(0,pts.length-1).toInt()],width:38,height:38,child:const Icon(Icons.directions_walk,color:Colors.white,size:34)),
      ]),
-    ],
-   )),
+    ]:const <Widget>[],
+   );
+  Widget googleMapWidget()=>Stack(fit:StackFit.expand,children:[
+   Positioned.fill(child:IgnorePointer(child:Opacity(opacity:0.001,child:flutterMapProjection(showRoute:false)))),
+   gmaps.GoogleMap(
+    key:ValueKey('rotasim-google-$flowStep-$mapRetry'),
+    initialCameraPosition:_initialGoogleCamera(),
+    mapType:mapMode==3?gmaps.MapType.satellite:gmaps.MapType.hybrid,
+    compassEnabled:false,
+    mapToolbarEnabled:false,
+    zoomControlsEnabled:false,
+    myLocationEnabled:false,
+    myLocationButtonEnabled:false,
+    scrollGesturesEnabled:!((drawing||editingPoints)&&flowStep==0),
+    zoomGesturesEnabled:true,
+    rotateGesturesEnabled:true,
+    onMapCreated:(controller){_googleControllers[flowStep]=controller;mapError=false;fitRoute();},
+    onCameraMove:_syncFlutterCamera,
+    onTap:(point){if(addingStop)unawaited(selectStopAt(LatLng(point.latitude,point.longitude)));},
+    polylines:<gmaps.Polyline>{
+     if(pts.length>1)gmaps.Polyline(polylineId:const gmaps.PolylineId('route-glow'),points:_googlePoints(),color:const Color(0x558B3DFF),width:9),
+     if(pts.length>1)gmaps.Polyline(polylineId:const gmaps.PolylineId('route'),points:_googlePoints(),color:purple,width:4),
+    },
+    markers:<gmaps.Marker>{
+     if(me!=null)gmaps.Marker(markerId:const gmaps.MarkerId('current-location'),position:_toGoogle(me!),icon:gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueAzure)),
+     if(pts.isNotEmpty&&!editingPoints)gmaps.Marker(markerId:const gmaps.MarkerId('route-start'),position:_toGoogle(pts.first),icon:gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueGreen)),
+     if(pts.length>1&&!editingPoints)gmaps.Marker(markerId:const gmaps.MarkerId('route-end'),position:_toGoogle(pts.last),icon:gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueRed)),
+     for(var i=0;i<stops.length;i++)if(stops[i].index>=0&&stops[i].index<pts.length)gmaps.Marker(markerId:gmaps.MarkerId('stop-$i'),position:_toGoogle(pts[stops[i].index]),icon:gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueOrange)),
+     if(editingPoints&&flowStep==0)for(var i=0;i<pts.length;i+=editStride)gmaps.Marker(markerId:gmaps.MarkerId('edit-$i'),position:_toGoogle(pts[i]),icon:gmaps.BitmapDescriptor.defaultMarkerWithHue(i==0?gmaps.BitmapDescriptor.hueGreen:i==pts.length-1?gmaps.BitmapDescriptor.hueRed:gmaps.BitmapDescriptor.hueViolet)),
+     if(editingPoints&&flowStep==0&&(pts.length-1)%editStride!=0)gmaps.Marker(markerId:gmaps.MarkerId('edit-${pts.length-1}'),position:_toGoogle(pts.last),icon:gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueRed)),
+     if(playing&&pts.isNotEmpty)gmaps.Marker(markerId:const gmaps.MarkerId('walking-simulator'),position:_toGoogle(pts[playIndex.clamp(0,pts.length-1).toInt()]),icon:gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueCyan),infoWindow:const gmaps.InfoWindow(title:'Yürüyüş önizlemesi')),
+    },
+   ),
+  ]);
+  Widget mapWidget()=>Listener(
+   behavior:HitTestBehavior.opaque,
+   onPointerDown:(e){
+    _mapPointers[e.pointer]=e.localPosition;activePointers=_mapPointers.length;
+    if(activePointers>=2){freehandActive=false;_endRouteDrag();final values=_mapPointers.values.toList(growable:false);_lastMultiPointerCenter=Offset(values.fold<double>(0,(sum,p)=>sum+p.dx)/values.length,values.fold<double>(0,(sum,p)=>sum+p.dy)/values.length);}
+    else if(drawing){freehandActive=true;freehandPoint(e.localPosition);}
+    else if(editingPoints&&flowStep==0){freehandActive=false;_beginRouteDrag(e.localPosition);}
+    else{freehandActive=false;}
+   },
+   onPointerMove:(e){
+    _mapPointers[e.pointer]=e.localPosition;activePointers=_mapPointers.length;
+    if(activePointers>1){freehandActive=false;if(_usingGoogleMap)_panGoogleWithTwoFingers();return;}
+    if(routeDragKind!=_RouteDragKind.none){_updateRouteDrag(e.localPosition);}else{freehandPoint(e.localPosition);}
+   },
+   onPointerUp:(e){_mapPointers.remove(e.pointer);activePointers=_mapPointers.length;freehandActive=false;if(activePointers<2)_lastMultiPointerCenter=null;if(activePointers==0)_endRouteDrag();},
+   onPointerCancel:(e){_mapPointers.remove(e.pointer);activePointers=_mapPointers.length;freehandActive=false;_lastMultiPointerCenter=null;_endRouteDrag();},
+   child:KeyedSubtree(key:mapGestureKeys[flowStep],child:_usingGoogleMap?googleMapWidget():flutterMapProjection()),
   );
   if(flowStep==0){
    return Scaffold(
@@ -529,7 +615,7 @@ class _Home extends State<Home>{
          child:Padding(
           padding:const EdgeInsets.symmetric(horizontal:6,vertical:3),
           child:Text(
-           mapMode==0?'© OpenMapTiles • © OpenStreetMap contributors':mapMode==1?'© Esri World Imagery':'© EOxCloudless • Copernicus Sentinel-2 (2025) ↗',
+           mapMode==0?'© OpenMapTiles • © OpenStreetMap contributors':mapMode==1?'© Esri World Imagery':mapMode==2?'© EOxCloudless • Copernicus Sentinel-2 (2025) ↗':'© Google Maps',
            maxLines:1,overflow:TextOverflow.ellipsis,
            style:const TextStyle(fontSize:9,color:Colors.white70),
           ),
@@ -540,8 +626,8 @@ class _Home extends State<Home>{
      ),
      Positioned(right:10,top:0,child:SafeArea(child:Padding(padding:const EdgeInsets.only(top:68),child:Column(children:[
       IconButton.filledTonal(tooltip:'Konumuma git',onPressed:locate,icon:const Icon(Icons.my_location)),
-      IconButton.filledTonal(tooltip:'Yakınlaştır',onPressed:()=>mc.move(mc.camera.center,mc.camera.zoom+1),icon:const Icon(Icons.add)),
-      IconButton.filledTonal(tooltip:'Uzaklaştır',onPressed:()=>mc.move(mc.camera.center,mc.camera.zoom-1),icon:const Icon(Icons.remove)),
+      IconButton.filledTonal(tooltip:'Yakınlaştır',onPressed:()=>unawaited(_moveMapCamera(mc.camera.center,mc.camera.zoom+1)),icon:const Icon(Icons.add)),
+      IconButton.filledTonal(tooltip:'Uzaklaştır',onPressed:()=>unawaited(_moveMapCamera(mc.camera.center,mc.camera.zoom-1)),icon:const Icon(Icons.remove)),
      ])))),
      if(drawing)Positioned(left:8,top:0,child:SafeArea(child:Padding(padding:const EdgeInsets.only(top:68),child:Column(children:[
       IconButton.filledTonal(tooltip:'Geri al',onPressed:back,icon:const Icon(Icons.undo)),

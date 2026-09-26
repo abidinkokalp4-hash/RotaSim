@@ -24,10 +24,14 @@ jobs:
           flutter-version: '3.47.5'
       - name: Create Android project
         run: flutter create --platforms=android --org com.rotasim .
-      - name: Add Android network and location permissions
+      - name: Add Android network, location, and Google Maps configuration
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
           python3 - <<'PY'
+          import os
           from pathlib import Path
+          from xml.sax.saxutils import escape
           p=Path('android/app/src/main/AndroidManifest.xml')
           s=p.read_text()
           marker='<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
@@ -37,6 +41,14 @@ jobs:
               <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>'''
           if 'android.permission.INTERNET' not in s:
               s=s.replace(marker,permissions)
+          key=os.environ.get('GOOGLE_MAPS_API_KEY','').strip()
+          if key and 'com.google.android.geo.API_KEY' not in s:
+              app_start=s.index('<application')
+              app_end=s.index('>',app_start)+1
+              meta='\n        <meta-data android:name="com.google.android.geo.API_KEY" android:value="'+escape(key,{'"': '&quot;'})+'"/>'
+              s=s[:app_end]+meta+s[app_end:]
+          with open(os.environ['GITHUB_ENV'],'a') as env_file:
+              env_file.write('GOOGLE_MAPS_CONFIGURED='+('true' if key else 'false')+'\n')
           p.write_text(s)
           PY
       - name: Get dependencies
@@ -44,7 +56,7 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-fatal-infos lib
       - name: Build release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --dart-define=GOOGLE_MAPS_CONFIGURED=$GOOGLE_MAPS_CONFIGURED
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
